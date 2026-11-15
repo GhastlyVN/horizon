@@ -2314,6 +2314,13 @@ pub fn session_for_game(
     offline_without_owner: bool,
 ) -> Result<GameSession, NoOwner> {
     let mut accounts = Accounts::load();
+    // Ely.by is a signed-in provider, not an offline-name choice. Never let a
+    // failed refresh or session-file write silently turn its selected account offline.
+    let selected_ely = accounts
+        .selected
+        .as_deref()
+        .and_then(|uuid| secrets_in(store(), uuid))
+        .is_some_and(|secrets| is_ely(&secrets));
     let pass = launch_for_game(
         &Endpoints::live(),
         client_id().as_deref(),
@@ -2329,7 +2336,11 @@ pub fn session_for_game(
     if let Err(e) = accounts.save() {
         eprintln!("Horizon: the accounts are not saved: {e}");
     }
-    Ok(session_file(game_home, pass, env))
+    let session = session_file(game_home, pass, env);
+    if selected_ely && session.file.is_none() {
+        return Err(NoOwner);
+    }
+    Ok(session)
 }
 
 /// [`session_for_game`] for one launch as `who` (`play --account`, a signed-in account): who
@@ -2338,6 +2349,10 @@ pub fn session_for_game(
 /// `account select` picked is not touched.
 pub fn session_for_game_as(game_home: &Path, who: &Player) -> Result<GameSession, String> {
     let mut accounts = Accounts::load();
+    let selected_ely = match who {
+        Player::Microsoft(uuid) => secrets_in(store(), uuid).is_some_and(|secrets| is_ely(&secrets)),
+        Player::Offline(_) | Player::GameName => false,
+    };
     let pass = launch_as(
         &Endpoints::live(),
         client_id().as_deref(),
@@ -2357,7 +2372,11 @@ pub fn session_for_game_as(game_home: &Path, who: &Player) -> Result<GameSession
     if let Err(e) = accounts.save() {
         eprintln!("Horizon: the accounts are not saved: {e}");
     }
-    Ok(session_file(game_home, pass, env))
+    let session = session_file(game_home, pass, env);
+    if selected_ely && session.file.is_none() {
+        return Err("The selected Ely.by account could not be handed to the game. It was not switched to Offline.".into());
+    }
+    Ok(session)
 }
 
 /// The owner gate as `who`, on `accounts`, which keeps its choice of player.
