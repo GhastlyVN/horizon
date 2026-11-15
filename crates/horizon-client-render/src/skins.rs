@@ -1530,6 +1530,36 @@ mod tests {
     }
 
     #[test]
+    fn ely_profiles_accept_documented_skin_and_cape_urls() {
+        use base64::Engine;
+        let payload = br#"{"textures":{"SKIN":{"url":"http://ely.by/storage/skins/test.png","metadata":{"model":"slim"}},"CAPE":{"url":"https://ely.by/storage/cloaks/test.png"}}}"#;
+        let value = base64::engine::general_purpose::STANDARD.encode(payload);
+        let profile = serde_json::json!({
+            "id": "ffc8fdc95824509e8a57c99b940fb996",
+            "name": "TestPlayer",
+            "properties": [{"name": "textures", "value": value, "signature": "signed"}]
+        });
+        let textures = super::ely_profile_textures(&profile);
+        assert_eq!(
+            textures.skin.as_deref(),
+            Some("http://ely.by/storage/skins/test.png")
+        );
+        assert_eq!(
+            textures.cape.as_deref(),
+            Some("https://ely.by/storage/cloaks/test.png")
+        );
+        assert!(textures.slim);
+        assert!(textures.signed);
+
+        let hostile = br#"{"textures":{"SKIN":{"url":"https://ely.by.attacker.invalid/storage/skins/test.png"}}}"#;
+        let hostile = base64::engine::general_purpose::STANDARD.encode(hostile);
+        let profile = serde_json::json!({
+            "properties": [{"name": "textures", "value": hostile}]
+        });
+        assert_eq!(super::ely_profile_textures(&profile), super::Textures::default());
+    }
+
+    #[test]
     fn sha1_and_base64() {
         let hex: String = sha1(b"abc").iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(hex, "a9993e364706816aba3e25717850c26c9cd0d89d");
