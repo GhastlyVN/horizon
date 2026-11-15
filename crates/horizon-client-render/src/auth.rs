@@ -561,7 +561,7 @@ pub fn own_textures(session: &AuthSession) -> Option<crate::skins::Textures> {
         // Ely.by exposes a Mojang-compatible profile. Its texture payload may
         // use Ely.by storage URLs, so never send this token to Minecraft Services.
         let url = format!(
-            "https://skinsystem.ely.by/profile/{}?unsigned=false",
+            "http://skinsystem.ely.by/profile/{}?unsigned=false",
             url_encode(&session.name)
         );
         let response = agent().get(&url).call().ok()?;
