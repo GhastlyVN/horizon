@@ -259,8 +259,7 @@ fn uses_content_only_registry_filter(content_only: bool, kind: PackKind, source:
 /// Native registry bundles are shown in Mod Workshop, not in the .hmod Content workspace.
 fn is_content_registry_entry(entry: &installed::Entry) -> bool {
     entry.source != SourceId::Horizon
-        || (!native_status::is_native_file(&entry.file)
-            && !horizon::is_native_mod(&entry.project))
+        || (!native_status::is_native_file(&entry.file) && !horizon::is_native_mod(&entry.project))
 }
 
 /// `51404735` → `51.4M`.
@@ -957,7 +956,8 @@ impl Launcher {
 
     /// Opens a kind's tab: its first source, its own filters, a new search.
     pub(super) fn mods_set_kind(&mut self, kind: PackKind) {
-        self.mods_set_content_route(kind, self.mods.content_only);
+        let content_only = self.mods.content_only;
+        self.mods_set_content_route(kind, content_only);
     }
 
     /// Configure the shared Mods panel for a Next UI route without changing legacy browser rules.
@@ -983,7 +983,7 @@ impl Launcher {
     }
 
     pub(super) fn mods_set_content_only(&mut self, content_only: bool) {
-        self.mods_set_content_route(self.mods.kind, content_only);
+        self.mods.content_only = content_only;
     }
 
     /// Remove, then Remove for good: an installed project leaves the instance on the second
@@ -1314,7 +1314,11 @@ impl Launcher {
             .mods
             .installed
             .iter()
-            .filter(|e| e.kind == kind && (!content_only || is_content_registry_entry(e)) && e.source == SourceId::Modrinth)
+            .filter(|e| {
+                e.kind == kind
+                    && (!content_only || is_content_registry_entry(e))
+                    && e.source == SourceId::Modrinth
+            })
             .map(|e| e.project.clone())
             .collect();
         self.ask_project_icons(ids, cx);
@@ -1938,16 +1942,24 @@ mod tests {
     #[test]
     fn content_only_filter_is_scoped_to_horizon_registry_mods() {
         assert!(uses_content_only_registry_filter(
-            true, PackKind::Mod, SourceId::Horizon
+            true,
+            PackKind::Mod,
+            SourceId::Horizon
         ));
         assert!(!uses_content_only_registry_filter(
-            false, PackKind::Mod, SourceId::Horizon
+            false,
+            PackKind::Mod,
+            SourceId::Horizon
         ));
         assert!(!uses_content_only_registry_filter(
-            true, PackKind::Mod, SourceId::Modrinth
+            true,
+            PackKind::Mod,
+            SourceId::Modrinth
         ));
         assert!(!uses_content_only_registry_filter(
-            true, PackKind::Modpack, SourceId::Horizon
+            true,
+            PackKind::Modpack,
+            SourceId::Horizon
         ));
     }
 
