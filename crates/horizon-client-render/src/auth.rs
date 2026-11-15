@@ -557,9 +557,20 @@ const MINECRAFT_PROFILE: &str = "https://api.minecraftservices.com/minecraft/pro
 /// Single-player and integrated servers often send no `textures` property, or
 /// one without the equipped cape; the client asks the profile endpoint once.
 pub fn own_textures(session: &AuthSession) -> Option<crate::skins::Textures> {
-    // An Ely.by token is not a Minecraft Services token: never send it there.
     if session.elyby {
-        return None;
+        // Ely.by exposes a Mojang-compatible profile. Its texture payload may
+        // use Ely.by storage URLs, so never send this token to Minecraft Services.
+        let url = format!(
+            "https://skinsystem.ely.by/profile/{}?unsigned=false",
+            url_encode(&session.name)
+        );
+        let response = agent().get(&url).call().ok()?;
+        if response.status() != 200 {
+            return None;
+        }
+        let body = response.into_string().ok()?;
+        let profile: serde_json::Value = serde_json::from_str(&body).ok()?;
+        return Some(crate::skins::ely_profile_textures(&profile));
     }
     let response = agent()
         .get(MINECRAFT_PROFILE)
