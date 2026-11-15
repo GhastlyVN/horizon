@@ -160,9 +160,8 @@ fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
 }
 
 fn is_real_directory(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|metadata| {
-        metadata.file_type().is_dir() && !is_link_or_reparse_point(&metadata)
-    })
+    fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.file_type().is_dir() && !is_link_or_reparse_point(&metadata))
 }
 
 fn inspect_tree(source: &Path, destination: &Path, stats: &mut TreePreview) -> Result<(), String> {
@@ -509,7 +508,12 @@ mod tests {
                 .arg(target)
                 .status()
                 .unwrap();
-            assert!(status.success(), "could not create junction {} -> {}", link.display(), target.display());
+            assert!(
+                status.success(),
+                "could not create junction {} -> {}",
+                link.display(),
+                target.display()
+            );
             let metadata = fs::symlink_metadata(link).unwrap();
             assert!(is_link_or_reparse_point(&metadata));
         }
