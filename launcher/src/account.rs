@@ -2350,7 +2350,9 @@ pub fn session_for_game(
 pub fn session_for_game_as(game_home: &Path, who: &Player) -> Result<GameSession, String> {
     let mut accounts = Accounts::load();
     let selected_ely = match who {
-        Player::Microsoft(uuid) => secrets_in(store(), uuid).is_some_and(|secrets| is_ely(&secrets)),
+        Player::Microsoft(uuid) => {
+            secrets_in(store(), uuid).is_some_and(|secrets| is_ely(&secrets))
+        }
         Player::Offline(_) | Player::GameName => false,
     };
     let pass = launch_as(
@@ -2374,7 +2376,10 @@ pub fn session_for_game_as(game_home: &Path, who: &Player) -> Result<GameSession
     }
     let session = session_file(game_home, pass, env);
     if selected_ely && session.file.is_none() {
-        return Err("The selected Ely.by account could not be handed to the game. It was not switched to Offline.".into());
+        return Err(
+            "The selected Ely.by account could not be handed to the game. It was not switched to Offline."
+                .into(),
+        );
     }
     Ok(session)
 }
