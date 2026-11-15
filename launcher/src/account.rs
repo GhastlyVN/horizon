@@ -327,7 +327,10 @@ pub fn is_ely_account(uuid: &str) -> bool {
 }
 
 fn finish_ely_sign_in(tokens: crate::ely::Tokens) -> (Account, Secrets) {
-    ELY_KNOWN.lock().unwrap().retain(|(u, _)| *u != tokens.profile.uuid);
+    ELY_KNOWN
+        .lock()
+        .unwrap()
+        .retain(|(u, _)| *u != tokens.profile.uuid);
     let account = Account {
         uuid: tokens.profile.uuid,
         name: tokens.profile.name,
@@ -2259,10 +2262,9 @@ impl SignIn {
                 } else {
                     let code = crate::ely::device_code()?;
                     set(SignInState::Code(code.clone().into()));
-                    let tokens = crate::ely::wait_for_device_code(
-                        &code,
-                        &|| thread_cancel.load(Ordering::Relaxed),
-                    )?;
+                    let tokens = crate::ely::wait_for_device_code(&code, &|| {
+                        thread_cancel.load(Ordering::Relaxed)
+                    })?;
                     finish_ely_sign_in(tokens)
                 };
                 progress(session::Phase::Queued);
