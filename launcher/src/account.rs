@@ -2311,18 +2311,22 @@ pub struct GameSession {
 /// The owner gate for the game about to start, then the selected account's session in a file
 /// for it, and the other accounts' for its splitscreen players. `offline_without_owner`: see
 /// [`launch_for_game`].
+/// A selected account whose credentials cannot be read must not quietly become the
+/// generated offline player. Ely.by always requires a session handoff; Microsoft keeps its
+/// established offline-on-network-failure behavior while its saved credentials still exist.
+fn selected_session_required(selected: Option<&str>, store: &dyn SecretStore) -> bool {
+    selected.is_some_and(|uuid| secrets_in(store, uuid).is_none_or(|secrets| is_ely(&secrets)))
+}
+
 pub fn session_for_game(
     game_home: &Path,
     offline_without_owner: bool,
 ) -> Result<GameSession, NoOwner> {
     let mut accounts = Accounts::load();
-    // Ely.by is a signed-in provider, not an offline-name choice. Never let a
-    // failed refresh or session-file write silently turn its selected account offline.
-    let selected_ely = accounts
-        .selected
-        .as_deref()
-        .and_then(|uuid| secrets_in(store(), uuid))
-        .is_some_and(|secrets| is_ely(&secrets));
+    // A missing/locked secret store used to look like "no provider", letting another
+    // account's ownership open the gate while this selected account silently became Offline.
+    let selected_requires_session =
+        selected_session_required(accounts.selected.as_deref(), store());
     let pass = launch_for_game(
         &Endpoints::live(),
         client_id().as_deref(),
@@ -2339,7 +2343,7 @@ pub fn session_for_game(
         eprintln!("Horizon: the accounts are not saved: {e}");
     }
     let session = session_file(game_home, pass, env);
-    if selected_ely && session.file.is_none() {
+    if selected_requires_session && session.file.is_none() {
         return Err(NoOwner);
     }
     Ok(session)
@@ -2351,10 +2355,8 @@ pub fn session_for_game(
 /// `account select` picked is not touched.
 pub fn session_for_game_as(game_home: &Path, who: &Player) -> Result<GameSession, String> {
     let mut accounts = Accounts::load();
-    let selected_ely = match who {
-        Player::Microsoft(uuid) => {
-            secrets_in(store(), uuid).is_some_and(|secrets| is_ely(&secrets))
-        }
+    let selected_requires_session = match who {
+        Player::Microsoft(uuid) => selected_session_required(Some(uuid), store()),
         Player::Offline(_) | Player::GameName => false,
     };
     let pass = launch_as(
@@ -2377,9 +2379,9 @@ pub fn session_for_game_as(game_home: &Path, who: &Player) -> Result<GameSession
         eprintln!("Horizon: the accounts are not saved: {e}");
     }
     let session = session_file(game_home, pass, env);
-    if selected_ely && session.file.is_none() {
+    if selected_requires_session && session.file.is_none() {
         return Err(
-            "The selected Ely.by account could not be handed to the game. It was not switched to Offline."
+            "The selected account's saved sign-in could not be read or handed to the game. Sign in again; it was not switched to Offline."
                 .into(),
         );
     }
