@@ -141,7 +141,6 @@ pub fn services_profile_textures(profile: &serde_json::Value) -> Textures {
     }
 }
 
-  
 /// The Ely.by skins-system profile uses the same base64 textures property as
 /// Mojang profiles, but its own storage URLs. Keep the allowlist narrow to
 /// official texture hosts and Ely.by's documented skin/cape paths.
@@ -1556,7 +1555,10 @@ mod tests {
         let profile = serde_json::json!({
             "properties": [{"name": "textures", "value": hostile}]
         });
-        assert_eq!(super::ely_profile_textures(&profile), super::Textures::default());
+        assert_eq!(
+            super::ely_profile_textures(&profile),
+            super::Textures::default()
+        );
     }
 
     #[test]
