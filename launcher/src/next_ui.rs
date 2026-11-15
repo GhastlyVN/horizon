@@ -81,11 +81,22 @@ fn content_kind(
     }
 }
 
+fn content_only_route(route: horizon_launcher::next_navigation::Route) -> bool {
+    use horizon_launcher::next_navigation::Route;
+    matches!(route, Route::ContentBrowser | Route::InstalledContent)
+}
+
+fn configure_content_route(this: &mut Launcher, route: horizon_launcher::next_navigation::Route) {
+    if let Some(kind) = content_kind(route) {
+        this.mods_set_content_route(kind, content_only_route(route));
+    } else {
+        this.mods_set_content_only(false);
+    }
+}
+
 fn select_route(this: &mut Launcher, route: horizon_launcher::next_navigation::Route) {
     // Keep the established content services authoritative while the new visual panels are built.
-    if let Some(kind) = content_kind(route) {
-        this.mods_set_kind(kind);
-    }
+    configure_content_route(this, route);
     this.next_route = route;
 }
 
@@ -146,6 +157,7 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
     let removing_versions = this.removing.clone();
     let version_error = this.install_error.clone();
     let confirm_remove = this.confirm_remove.clone();
+    configure_content_route(this, active);
     let content_route = matches!(
         active,
         Route::ContentBrowser | Route::InstalledContent | Route::ModpackManager
@@ -1345,7 +1357,7 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
 
 #[cfg(test)]
 mod tests {
-    use super::{layout_metrics, preview_enabled};
+    use super::{content_only_route, layout_metrics, preview_enabled};
 
     #[test]
     fn shell_layout_scales_for_compact_and_standard_windows() {
@@ -1390,6 +1402,10 @@ mod tests {
             Some(horizon_launcher::browser::Kind::Modpack)
         );
         assert_eq!(super::content_kind(Route::ServerDashboard), None);
+        assert!(content_only_route(Route::ContentBrowser));
+        assert!(content_only_route(Route::InstalledContent));
+        assert!(!content_only_route(Route::ModpackManager));
+        assert!(!content_only_route(Route::ModWorkshop));
     }
 
     #[test]

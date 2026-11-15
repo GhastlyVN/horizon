@@ -72,6 +72,8 @@ pub(super) struct Mods {
     focus: FocusHandle,
     pub(super) focused: bool,
     everything: bool,
+    /// The Next UI's Content workspace must not mix registry-native .hnmod entries into .hmod.
+    content_only: bool,
     /// Which search is the current one; answers for older ones are dropped.
     search: u64,
     searching: bool,
@@ -169,6 +171,7 @@ impl Mods {
             focus: cx.focus_handle().tab_index(0).tab_stop(true),
             focused: false,
             everything: false,
+            content_only: false,
             search: 0,
             searching: false,
             searched: false,
@@ -247,6 +250,17 @@ impl Mods {
             _ => Support::Partial(tr("Checking its jar…").into()),
         }
     }
+}
+
+fn uses_content_only_registry_filter(content_only: bool, kind: PackKind, source: SourceId) -> bool {
+    content_only && kind == PackKind::Mod && source == SourceId::Horizon
+}
+
+/// Native registry bundles are shown in Mod Workshop, not in the .hmod Content workspace.
+fn is_content_registry_entry(entry: &installed::Entry) -> bool {
+    entry.source != SourceId::Horizon
+        || (!native_status::is_native_file(&entry.file)
+            && !horizon::is_native_mod(&entry.project))
 }
 
 /// `51404735` → `51.4M`.
@@ -460,11 +474,16 @@ impl Launcher {
             Some(_) => SourceId::Modrinth,
             None => m.source,
         };
+        let content_only = m.content_only;
         let (tx, search) = (m.tx.clone(), m.search);
         std::thread::spawn(move || {
-            let result = browser::source(source)
-                .ok_or_else(|| format!("{} isn't set up.", source.label()))
-                .and_then(|s| s.search(&query));
+            let result = if uses_content_only_registry_filter(content_only, query.kind, source) {
+                horizon_launcher::next_facade::content::registry_mods(&query)
+            } else {
+                browser::source(source)
+                    .ok_or_else(|| format!("{} isn't set up.", source.label()))
+                    .and_then(|s| s.search(&query))
+            };
             let about: HashMap<String, Vec<String>> = match (&result, source) {
                 (Ok(found), SourceId::Horizon) => found
                     .iter()
@@ -938,7 +957,14 @@ impl Launcher {
 
     /// Opens a kind's tab: its first source, its own filters, a new search.
     pub(super) fn mods_set_kind(&mut self, kind: PackKind) {
-        if self.mods.kind != kind {
+        self.mods_set_content_route(kind, self.mods.content_only);
+    }
+
+    /// Configure the shared Mods panel for a Next UI route without changing legacy browser rules.
+    pub(super) fn mods_set_content_route(&mut self, kind: PackKind, content_only: bool) {
+        let kind_changed = self.mods.kind != kind;
+        let filter_changed = self.mods.content_only != content_only;
+        if kind_changed {
             self.mods.kind = kind;
             self.mods.source = source_for(kind);
             // A data pack goes into a world: one may have been made since.
@@ -949,8 +975,15 @@ impl Launcher {
             self.mods.browse.filters = Default::default();
             self.mods.browse.open = None;
             self.mods.picked = None;
+        }
+        self.mods.content_only = content_only;
+        if (kind_changed || filter_changed) && self.mods.asked {
             self.mods_search(0);
         }
+    }
+
+    pub(super) fn mods_set_content_only(&mut self, content_only: bool) {
+        self.mods_set_content_route(self.mods.kind, content_only);
     }
 
     /// Remove, then Remove for good: an installed project leaves the instance on the second
@@ -1275,12 +1308,13 @@ impl Launcher {
     fn mods_installed_list(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         let t = self.theme;
         let kind = self.mods.kind;
+        let content_only = self.mods.content_only && kind == PackKind::Mod;
         // Each project's own icon (Modrinth's, asked for once), at the row's size.
         let ids = self
             .mods
             .installed
             .iter()
-            .filter(|e| e.kind == kind && e.source == SourceId::Modrinth)
+            .filter(|e| e.kind == kind && (!content_only || is_content_registry_entry(e)) && e.source == SourceId::Modrinth)
             .map(|e| e.project.clone())
             .collect();
         self.ask_project_icons(ids, cx);
@@ -1289,16 +1323,16 @@ impl Launcher {
             .installed
             .clone()
             .iter()
-            .filter(|e| e.kind == kind)
+            .filter(|e| e.kind == kind && (!content_only || is_content_registry_entry(e)))
             .map(|e| self.project_icon(e))
             .collect();
         let entries: Vec<&installed::Entry> = self
             .mods
             .installed
             .iter()
-            .filter(|e| e.kind == kind)
+            .filter(|e| e.kind == kind && (!content_only || is_content_registry_entry(e)))
             .collect();
-        let native_entries = if kind == PackKind::Mod && self.mods.java.is_none() {
+        let native_entries = if !content_only && kind == PackKind::Mod && self.mods.java.is_none() {
             self.native_files()
         } else {
             Vec::new()
@@ -1900,6 +1934,64 @@ fn source_switch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_only_filter_is_scoped_to_horizon_registry_mods() {
+        assert!(uses_content_only_registry_filter(
+            true, PackKind::Mod, SourceId::Horizon
+        ));
+        assert!(!uses_content_only_registry_filter(
+            false, PackKind::Mod, SourceId::Horizon
+        ));
+        assert!(!uses_content_only_registry_filter(
+            true, PackKind::Mod, SourceId::Modrinth
+        ));
+        assert!(!uses_content_only_registry_filter(
+            true, PackKind::Modpack, SourceId::Horizon
+        ));
+    }
+
+    #[test]
+    fn content_workspace_hides_native_bundle_install_records() {
+        fn entry(source: SourceId, file: String, project: &str) -> installed::Entry {
+            installed::Entry {
+                source,
+                project: project.into(),
+                slug: project.into(),
+                title: project.into(),
+                kind: PackKind::Mod,
+                version: "1.0".into(),
+                number: "1.0".into(),
+                file,
+                checksum: String::new(),
+                page: String::new(),
+                dependency: false,
+                verdict: None,
+                skipped: Vec::new(),
+                namespaces: Vec::new(),
+            }
+        }
+
+        let native = entry(
+            SourceId::Horizon,
+            "horizon-native-mods/example.hnmod".into(),
+            "content-only-test-native",
+        );
+        let content = entry(
+            SourceId::Horizon,
+            format!("{}/content-only-test.hmod", java::MODS_DIR),
+            "content-only-test-content",
+        );
+        let external = entry(
+            SourceId::Modrinth,
+            "mods/external.jar".into(),
+            "content-only-test-external",
+        );
+
+        assert!(!is_content_registry_entry(&native));
+        assert!(is_content_registry_entry(&content));
+        assert!(is_content_registry_entry(&external));
+    }
 
     #[test]
     fn counts_and_checksums_read_short() {
