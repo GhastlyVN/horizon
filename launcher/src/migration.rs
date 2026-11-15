@@ -85,12 +85,12 @@ impl Migration {
 }
 
 fn validate_pair(source: &Path, destination: &Path) -> Result<(), String> {
-    if !source.exists() {
+    if !lstat_exists(source) {
         return Ok(());
     }
     let source_metadata =
         fs::symlink_metadata(source).map_err(|e| format!("{}: {e}", source.display()))?;
-    if !source_metadata.file_type().is_dir() {
+    if is_link_or_reparse_point(&source_metadata) || !source_metadata.file_type().is_dir() {
         return Err(format!("{} is not a regular folder", source.display()));
     }
     let source = fs::canonicalize(source).map_err(|e| format!("{}: {e}", source.display()))?;
@@ -116,7 +116,7 @@ fn canonicalize_with_missing_tail(path: &Path) -> Result<PathBuf, String> {
     }
     let mut ancestor = path;
     let mut tail = Vec::new();
-    while !ancestor.exists() {
+    while !lstat_exists(ancestor) {
         let name = ancestor
             .file_name()
             .ok_or_else(|| format!("{} has no existing parent folder", path.display()))?;
@@ -124,6 +124,12 @@ fn canonicalize_with_missing_tail(path: &Path) -> Result<PathBuf, String> {
         ancestor = ancestor
             .parent()
             .ok_or_else(|| format!("{} has no existing parent folder", path.display()))?;
+    }
+    if !is_real_directory(ancestor) {
+        return Err(format!(
+            "{} is not a safe existing parent folder",
+            ancestor.display()
+        ));
     }
     let mut result =
         fs::canonicalize(ancestor).map_err(|e| format!("{}: {e}", ancestor.display()))?;
@@ -137,12 +143,43 @@ fn lstat_exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
+fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 fn is_real_directory(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
+    fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.file_type().is_dir() && !is_link_or_reparse_point(&metadata)
+    })
 }
 
 fn inspect_tree(source: &Path, destination: &Path, stats: &mut TreePreview) -> Result<(), String> {
-    if !source.exists() {
+    if !lstat_exists(source) {
+        return Ok(());
+    }
+    let source_metadata =
+        fs::symlink_metadata(source).map_err(|e| format!("{}: {e}", source.display()))?;
+    if is_link_or_reparse_point(&source_metadata) {
+        stats.skipped_symlinks += 1;
+        return Ok(());
+    }
+    if !source_metadata.file_type().is_dir() {
+        return Err(format!("{} is not a regular folder", source.display()));
+    }
+    if lstat_exists(destination) && !is_real_directory(destination) {
+        stats.conflicts += 1;
         return Ok(());
     }
     let entries = fs::read_dir(source).map_err(|e| format!("{}: {e}", source.display()))?;
@@ -153,7 +190,7 @@ fn inspect_tree(source: &Path, destination: &Path, stats: &mut TreePreview) -> R
         let metadata =
             fs::symlink_metadata(&from).map_err(|e| format!("{}: {e}", from.display()))?;
         let kind = metadata.file_type();
-        if kind.is_symlink() {
+        if is_link_or_reparse_point(&metadata) {
             stats.skipped_symlinks += 1;
         } else if kind.is_dir() {
             if lstat_exists(&to) && !is_real_directory(&to) {
@@ -173,10 +210,31 @@ fn inspect_tree(source: &Path, destination: &Path, stats: &mut TreePreview) -> R
 }
 
 fn copy_tree(source: &Path, destination: &Path, result: &mut TreeResult) -> Result<(), String> {
-    if !source.exists() {
+    if !lstat_exists(source) {
         return Ok(());
     }
+    let source_metadata =
+        fs::symlink_metadata(source).map_err(|e| format!("{}: {e}", source.display()))?;
+    if is_link_or_reparse_point(&source_metadata) {
+        result.skipped_symlinks += 1;
+        return Ok(());
+    }
+    if !source_metadata.file_type().is_dir() {
+        return Err(format!("{} is not a regular folder", source.display()));
+    }
+    if lstat_exists(destination) && !is_real_directory(destination) {
+        return Err(format!(
+            "{} exists but is not a regular destination folder",
+            destination.display()
+        ));
+    }
     fs::create_dir_all(destination).map_err(|e| format!("{}: {e}", destination.display()))?;
+    if !is_real_directory(destination) {
+        return Err(format!(
+            "{} is not a safe destination folder",
+            destination.display()
+        ));
+    }
     let entries = fs::read_dir(source).map_err(|e| format!("{}: {e}", source.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("{}: {e}", source.display()))?;
@@ -185,7 +243,7 @@ fn copy_tree(source: &Path, destination: &Path, result: &mut TreeResult) -> Resu
         let metadata =
             fs::symlink_metadata(&from).map_err(|e| format!("{}: {e}", from.display()))?;
         let kind = metadata.file_type();
-        if kind.is_symlink() {
+        if is_link_or_reparse_point(&metadata) {
             result.skipped_symlinks += 1;
         } else if kind.is_dir() {
             if lstat_exists(&to) && !is_real_directory(&to) {
@@ -437,6 +495,61 @@ mod tests {
         let destination = source.join("portable");
         let error = validate_pair(&source, &destination).unwrap_err();
         assert!(error.contains("separate folders"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn junctions_are_skipped_in_source_and_destination_trees() {
+        use std::process::Command;
+
+        fn junction(link: &Path, target: &Path) {
+            let status = Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .status()
+                .unwrap();
+            assert!(status.success(), "could not create junction {} -> {}", link.display(), target.display());
+            let metadata = fs::symlink_metadata(link).unwrap();
+            assert!(is_link_or_reparse_point(&metadata));
+        }
+
+        let temp = TempTree::new();
+        let migration = migration(&temp.0);
+        fs::create_dir_all(&migration.launcher_source).unwrap();
+        fs::create_dir_all(&migration.launcher_destination).unwrap();
+
+        let outside_source = temp.0.join("outside-source");
+        fs::create_dir_all(&outside_source).unwrap();
+        fs::write(outside_source.join("must-not-copy.txt"), "outside").unwrap();
+        junction(&migration.launcher_source.join("linked"), &outside_source);
+
+        let source_nested = migration.launcher_source.join("nested");
+        fs::create_dir_all(&source_nested).unwrap();
+        fs::write(source_nested.join("nested.txt"), "inside").unwrap();
+        let outside_destination = temp.0.join("outside-destination");
+        fs::create_dir_all(&outside_destination).unwrap();
+        junction(
+            &migration.launcher_destination.join("nested"),
+            &outside_destination,
+        );
+
+        let preview = migration.preview().unwrap();
+        assert_eq!(preview.launcher.skipped_symlinks, 1);
+        assert_eq!(preview.launcher.conflicts, 1);
+        let result = migration.execute().unwrap();
+        assert_eq!(result.launcher.skipped_symlinks, 1);
+        assert_eq!(result.launcher.skipped_existing, 1);
+        assert!(!migration.launcher_destination.join("linked").exists());
+        assert!(!outside_destination.join("nested.txt").exists());
+
+        let source_root = temp.0.join("source-root-junction");
+        junction(&source_root, &outside_source);
+        assert!(validate_pair(&source_root, &temp.0.join("other-destination")).is_err());
+
+        let destination_root = temp.0.join("destination-root-junction");
+        junction(&destination_root, &outside_destination);
+        assert!(validate_pair(&migration.launcher_source, &destination_root).is_err());
     }
 
     #[test]
