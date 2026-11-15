@@ -548,8 +548,9 @@ impl Options {
         else {
             return Ok(None);
         };
-        // The launcher's account: online-mode servers need it. A bad file
-        // only leaves the game offline.
+        // A missing session is an intentional offline launch. But once the launcher
+        // explicitly supplies a session file/stdin, rejecting it must fail closed: silently
+        // starting with a generated offline identity hides broken account handoff.
         let session = if o.session_stdin {
             let mut text = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
@@ -571,7 +572,7 @@ impl Options {
                 horizon_client::auth::prepare_chat_keys(true);
             }
             Ok(None) => {}
-            Err(e) => eprintln!("Horizon: not signed in: {e}"),
+            Err(e) => return Err(format!("Horizon could not load the selected account session: {e}").into()),
         }
         split::launcher::read_now();
         if let Some(dir) = o.game_dir.take() {
