@@ -877,6 +877,7 @@ impl Audio {
         } else {
             Err("no output on a dedicated server".into())
         };
+        #[cfg(feature = "audio")]
         let (stream, live) = match opened {
             Ok(v) => (Some(v), true),
             Err(e) => {
@@ -885,6 +886,13 @@ impl Audio {
                 }
                 (None, false)
             }
+        };
+        // Without the audio feature, Stream is Infallible and open_named can
+        // only return an error. Keep the server build's no-output path explicit.
+        #[cfg(not(feature = "audio"))]
+        let (stream, live) = {
+            let _ = opened;
+            (None, false)
         };
         let mut engine = SoundEngine::new(registry);
         engine.loaded = live;
