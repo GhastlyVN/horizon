@@ -141,6 +141,32 @@ pub fn services_profile_textures(profile: &serde_json::Value) -> Textures {
     }
 }
 
+  
+/// The Ely.by skins-system profile uses the same base64 textures property as
+/// Mojang profiles, but its own storage URLs. Keep the allowlist narrow to
+/// official texture hosts and Ely.by's documented skin/cape paths.
+pub fn ely_profile_textures(profile: &serde_json::Value) -> Textures {
+    const ELY_TEXTURE_URIS: [&str; 8] = [
+        "http://ely.by/storage/skins/",
+        "https://ely.by/storage/skins/",
+        "http://ely.by/storage/cloaks/",
+        "https://ely.by/storage/cloaks/",
+        "http://ely.by/minecraft/skins/",
+        "https://ely.by/minecraft/skins/",
+        "http://ely.by/minecraft/cloaks/",
+        "https://ely.by/minecraft/cloaks/",
+    ];
+    let Some((value, signature)) = parse_profile(profile).textures else {
+        return Textures::default();
+    };
+    let allowed: Vec<&str> = TEXTURE_URIS
+        .iter()
+        .copied()
+        .chain(ELY_TEXTURE_URIS)
+        .collect();
+    unpack(&value, signature, &allowed)
+}
+
 /// `profile_skin_url` on a block entity's `profile` NBT (`SkullBlockEntity`):
 /// the same `properties` list, held as a compound. A name-only profile (a
 /// string tag) has no properties and no skin URL.
