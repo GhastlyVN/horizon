@@ -572,7 +572,11 @@ impl Options {
                 horizon_client::auth::prepare_chat_keys(true);
             }
             Ok(None) => {}
-            Err(e) => return Err(format!("Horizon could not load the selected account session: {e}").into()),
+            Err(e) => {
+                return Err(
+                    format!("Horizon could not load the selected account session: {e}").into(),
+                );
+            }
         }
         split::launcher::read_now();
         if let Some(dir) = o.game_dir.take() {
