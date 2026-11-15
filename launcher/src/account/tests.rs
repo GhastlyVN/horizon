@@ -688,6 +688,38 @@ fn any_owner_opens_the_gate_and_the_one_who_plays_brings_the_session() {
 }
 
 #[test]
+fn selected_account_with_missing_credentials_must_not_become_offline() {
+    let store = MemoryStore::default();
+
+    // A selected identity still present in accounts.json but absent from the keychain
+    // must fail closed, even if a different account could satisfy the owner gate.
+    assert!(selected_session_required(Some("elyby-uuid"), &store));
+    assert!(!selected_session_required(None, &store));
+
+    store
+        .set(
+            "microsoft-uuid",
+            &serde_json::to_string(&secrets("mc-token", true)).unwrap(),
+        )
+        .unwrap();
+    assert!(!selected_session_required(Some("microsoft-uuid"), &store));
+
+    let ely = Secrets {
+        refresh_token: "elyby-refresh:refresh".into(),
+        sign_in_required: false,
+        minecraft_token: "elyby:access".into(),
+        minecraft_expires_at: now() + 7200,
+        xuid: None,
+        owns: false,
+        plays: Some(true),
+    };
+    store
+        .set("elyby-uuid", &serde_json::to_string(&ely).unwrap())
+        .unwrap();
+    assert!(selected_session_required(Some("elyby-uuid"), &store));
+}
+
+#[test]
 fn offline_names_play_only_beside_an_owner() {
     let store = MemoryStore::default();
     let mut accounts = Accounts::default();
