@@ -7,9 +7,10 @@
 //!         [--only <asset>] [--key <base64>] [--publishing] <folder>
 //!     horizon-release-sign keygen --public-out key.pub | gh secret set RELEASE_SIGNING_KEY --env release
 //!
-//! `verify` checks SHA256SUMS.sig (or SHA256SUMS.v2.sig with `--nightly-version`) and every
-//! selected file SHA256SUMS lists with the keys built in from release-keys.txt (or `--key`). With `--publishing` (release.yml) a release
-//! may go out unsigned, or signed with a key nobody can check yet, only while release-keys.txt
+//! `verify` checks SHA256SUMS.sig (or SHA256SUMS.v2.sig with `--nightly-version`) and the
+//! selected files SHA256SUMS lists with the keys built in from release-keys.txt (or `--key`).
+//! With `--publishing` (release.yml) a release may go out unsigned, or signed with a key nobody
+//! can check yet, only while release-keys.txt
 //! lists no key; once it lists one, anything launchers would refuse fails the release.
 
 use horizon_release_sign::{
@@ -25,8 +26,9 @@ fn main() -> ExitCode {
         Some("verify") => check_folder(&args[1..]),
         Some("keygen") => keygen(&args[1..]),
         _ => Err(
-            "usage: horizon-release-sign verify --tag <tag> [--key <base64>]... [--publishing] \
-             <folder> | keygen --public-out <file>"
+            "usage: horizon-release-sign verify --tag <tag> [--nightly-version <version>] \
+             [--only <asset>] [--key <base64>]... [--publishing] <folder> | \
+             keygen --public-out <file>"
                 .into(),
         ),
     };
