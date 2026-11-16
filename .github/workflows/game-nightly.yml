@@ -213,7 +213,6 @@ jobs:
       - name: Publish the dated Nightly and move the current channel tag
         env:
           GH_TOKEN: ${{ github.token }}
-          FORCE: ${{ inputs.force && 'true' || 'false' }}
           TITLE: ${{ needs.detect.outputs.title }}
           DATE: ${{ needs.detect.outputs.date }}
           SHORT: ${{ needs.detect.outputs.short }}
