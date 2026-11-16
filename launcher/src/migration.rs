@@ -379,9 +379,9 @@ mod tests {
     fn migration(root: &Path) -> Migration {
         Migration {
             launcher_source: root.join("old-launcher"),
-            launcher_destination: root.join("portable/Horizon-Data"),
+            launcher_destination: root.join("portable").join("Horizon-Data"),
             game_source: root.join("old-game"),
-            game_destination: root.join("portable/Horizon-Data/horizon"),
+            game_destination: root.join("portable").join("Horizon-Data").join("horizon"),
         }
     }
 
