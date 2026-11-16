@@ -52,8 +52,9 @@ pub fn launcher_digest(
     digest_from(LAUNCHER_REPO, tag, asset, keys, fetch)
 }
 
-/// The signed SHA-256 of `asset` in the Nightly published under `tag` (`nightly`, or a dated
-/// `nightly-<date>`) that installs as `version` (`nightly-<date>-<commit>`): its
+/// The signed SHA-256 of `asset` in the Nightly published under `tag` (`nightly`, `nightly-<date>`,
+/// `elyby-nightly`, or a dated `elyby-nightly-<date>-<commit>`) that installs as `version`
+/// (`nightly-<date>-<commit>`): its
 /// `SHA256SUMS.v2.sig` must sign the checksums for exactly that version, so an older Nightly
 /// can't be served as a newer one. The channel's `SHA256SUMS.sig` is for launchers from before
 /// and is not read.
