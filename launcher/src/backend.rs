@@ -4732,6 +4732,27 @@ pub fn {f}("
     /// The Nightly is the only build Horizon ships (docs/release-flow.md): every launcher takes the
     /// current one as its update, over every release; the last week's are listed, never offered.
     #[test]
+    fn windows_elyby_nightly_is_the_current_update_under_its_own_tag() {
+        let asset = ASSET.unwrap_or("horizon-windows-x64.zip");
+        let list = serde_json::json!([{
+            "tag_name": "elyby-nightly",
+            "name": "Nightly 2026-11-16 · abcdef0",
+            "prerelease": true,
+            "published_at": "2026-11-16T12:00:00Z",
+            "assets": [{"name": asset, "browser_download_url": "fork-build", "size": 1}]
+        }]);
+        let releases = game_releases(&list);
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].tag, "nightly-2026-11-16-abcdef0");
+        assert_eq!(releases[0].nightly.as_deref(), Some("elyby-nightly"));
+        assert!(!releases[0].prerelease);
+        assert_eq!(
+            installable_updates(&releases)[0].tag,
+            "nightly-2026-11-16-abcdef0"
+        );
+    }
+
+    #[test]
     fn every_launcher_updates_to_the_current_nightly() {
         let asset = ASSET.unwrap_or("horizon-linux-x86_64.tar.gz");
         let build = |url: &str| serde_json::json!([{"name": asset, "browser_download_url": url, "size": 1}]);
