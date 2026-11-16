@@ -201,12 +201,12 @@ jobs:
           NIGHTLY_VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          bash tools/ci/sign_release.sh nightly dist/horizon-windows-x64.zip
+          bash tools/ci/sign_release.sh elyby-nightly dist/horizon-windows-x64.zip
 
       - name: Verify the signatures exactly as the launcher does
         run: |
           set -euo pipefail
-          cargo run --locked --quiet -p horizon-release-sign -- verify --tag nightly dist
+          cargo run --locked --quiet -p horizon-release-sign -- verify --tag elyby-nightly dist
           cargo run --locked --quiet -p horizon-release-sign -- verify \
             --tag elyby-nightly --nightly-version "$NIGHTLY_VERSION" dist
 
