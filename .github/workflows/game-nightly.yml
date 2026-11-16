@@ -236,6 +236,8 @@ jobs:
             --only horizon-windows-x64.zip ../upstream
 
       - name: Extract upstream source, apply Ely.by support, and read exporters
+        env:
+          UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
         run: |
           set -euo pipefail
           rm -rf ../upstream-source
