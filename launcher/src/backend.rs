@@ -9,8 +9,8 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-/// The Horizon game's releases, the mixin registry and links.json: the upstream repository
-/// publishes them, so the game and the launcher both update from it.
+/// Upstream's game releases, mixin registry and links.json. The launcher reads these game
+/// resources from upstream; its own self-updates come from [`LAUNCHER_REPO`].
 pub const REPO: &str = "horizon-rust/horizon";
 /// The launcher's own releases, published by this fork: the launcher self-updates from them
 /// ([`launcher_releases_in`]).
