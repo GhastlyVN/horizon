@@ -2795,10 +2795,9 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
         .cloned()
 }
 
-/// Load the game's release list from [`REPO`] and the launcher's own from [`LAUNCHER_REPO`], and
-/// parse both update kinds from the two responses. Publish the game releases before the launcher
-/// list is read, so a slow or failing launcher read cannot hold up the release pages or the
-/// opening animation. A list error reaches both kinds.
+/// Load upstream game releases plus this platform's Nightly source, and the launcher's own list.
+/// Publish game releases before the launcher list is read, so a slow or failing launcher read
+/// cannot hold up the release pages or the opening animation. A list error reaches both kinds.
 pub fn releases_and_updates(
     on_releases: impl FnOnce(Result<Vec<Release>, String>),
 ) -> Result<Updates, String> {
