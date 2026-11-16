@@ -179,7 +179,10 @@ fn windows_mirror_replaces_only_upstream_nightlies() {
         {"tag_name":"nightly","name":"Fork's inherited upstream Nightly","assets":[]}
     ]);
     let merged = merge_fork_nightlies(upstream, fork);
-    let tags: Vec<_> = merged.as_array().unwrap().iter()
+    let tags: Vec<_> = merged
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|release| release["tag_name"].as_str().unwrap())
         .collect();
     assert_eq!(
