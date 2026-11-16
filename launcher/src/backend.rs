@@ -50,8 +50,9 @@ pub struct Release {
     /// Listed and installed by hand, never as an update: a GitHub pre-release of the old Alpha
     /// channel (v0.2.1 on), or a Nightly older than the current one.
     pub prerelease: bool,
-    /// A Nightly's GitHub tag (`nightly`, or `nightly-<date>` for the last week's): its files and
-    /// signature are there, while `tag` is the version it installs as (`nightly-2026-10-28-0c02067`).
+    /// A Nightly's GitHub tag (`nightly` upstream, or `elyby-nightly` on Windows; dated tags
+    /// retain their channel prefix): its files and signature are there, while `tag` is the version
+    /// it installs as (`nightly-2026-10-28-0c02067`).
     /// None for a release.
     pub nightly: Option<String>,
 }
@@ -469,7 +470,8 @@ pub fn releases() -> Result<Vec<Release>, String> {
 }
 
 /// The game's builds in `list`, newest first. A Nightly is listed under the version it installs as
-/// ([`crate::nightly::version_of`]); only the current one (`nightly`) is an update.
+/// ([`crate::nightly::version_of`]); only the current channel tag (`nightly` upstream or
+/// `elyby-nightly` on Windows) is an update.
 pub(crate) fn game_releases(list: &serde_json::Value) -> Vec<Release> {
     let mut out = parse_releases(list, ASSET, |tag| {
         is_game_tag(tag) || horizon_release_sign::is_nightly(tag)
