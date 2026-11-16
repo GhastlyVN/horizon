@@ -90,6 +90,51 @@ pub fn unpack(value: &str, signature: Signature, valid_uris: &[&str]) -> Texture
     out
 }
 
+/// The raw JSON body of Ely.by's `/textures/{nickname}` endpoint.
+/// Unlike `/profile/{nickname}`, this endpoint returns the texture payload
+/// itself rather than a GameProfile with a base64-encoded property.
+pub fn ely_textures_response(payload: &serde_json::Value) -> Textures {
+    const ELY_TEXTURE_URIS: [&str; 8] = [
+        "http://ely.by/storage/skins/",
+        "https://ely.by/storage/skins/",
+        "http://ely.by/storage/cloaks/",
+        "https://ely.by/storage/cloaks/",
+        "http://ely.by/minecraft/skins/",
+        "https://ely.by/minecraft/skins/",
+        "http://ely.by/minecraft/cloaks/",
+        "https://ely.by/minecraft/cloaks/",
+    ];
+    let allowed = |url: &str| {
+        TEXTURE_URIS
+            .iter()
+            .any(|u| url.starts_with(&u.replace("{textureId}", "")))
+            || ELY_TEXTURE_URIS.iter().any(|u| url.starts_with(u))
+    };
+    let skin_entry = payload.get("SKIN");
+    let skin = skin_entry
+        .and_then(|entry| entry.get("url"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|url| allowed(url))
+        .map(str::to_owned);
+    let slim = skin_entry
+        .and_then(|entry| entry.pointer("/metadata/model"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|model| model.eq_ignore_ascii_case("slim"));
+    let cape = payload
+        .get("CAPE")
+        .and_then(|entry| entry.get("url"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|url| allowed(url))
+        .map(str::to_owned);
+    Textures {
+        skin,
+        slim,
+        cape,
+        elytra: None,
+        signed: false,
+    }
+}
+
 /// The skin URL of a `minecraft:profile` component's property list. Player
 /// heads and mannequins read their profile this way, and `SkinManager` lets
 /// those textures be unsigned (`getInsecureSkinInformation`).
@@ -1227,6 +1272,37 @@ mod tests {
         // Empty properties leave it dynamic.
         let p = parse_profile(&serde_json::json!({"name": "Notch", "properties": []}));
         assert_eq!(p.dynamic, Some(NameOrId::Name("Notch".into())));
+    }
+
+    #[test]
+    fn ely_raw_textures_endpoint_accepts_documented_skin_payload() {
+        let payload = serde_json::json!({
+            "SKIN": {
+                "url": "http://ely.by/storage/skins/test.png",
+                "metadata": {"model": "slim"}
+            },
+            "CAPE": {"url": "https://ely.by/storage/cloaks/test.png"}
+        });
+        let textures = super::ely_textures_response(&payload);
+        assert_eq!(
+            textures.skin.as_deref(),
+            Some("http://ely.by/storage/skins/test.png")
+        );
+        assert!(textures.slim);
+        assert_eq!(
+            textures.cape.as_deref(),
+            Some("https://ely.by/storage/cloaks/test.png")
+        );
+        assert!(!textures.signed);
+
+        let hostile = serde_json::json!({
+            "SKIN": {"url": "https://evil.example/skin.png"},
+            "CAPE": {"url": "https://evil.example/cape.png"}
+        });
+        assert_eq!(
+            super::ely_textures_response(&hostile),
+            super::Textures::default()
+        );
     }
 
     #[test]
