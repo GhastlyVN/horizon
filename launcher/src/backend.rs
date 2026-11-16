@@ -4729,8 +4729,7 @@ pub fn {f}("
         ));
     }
 
-    /// The Nightly is the only build Horizon ships (docs/release-flow.md): every launcher takes the
-    /// current one as its update, over every release; the last week's are listed, never offered.
+    /// The fork's current Ely.by tag is offered as the update while older dated builds stay listed.
     #[test]
     fn windows_elyby_nightly_is_the_current_update_under_its_own_tag() {
         let asset = ASSET.unwrap_or("horizon-windows-x64.zip");
