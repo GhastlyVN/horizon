@@ -256,6 +256,10 @@ fn uses_content_only_registry_filter(content_only: bool, kind: PackKind, source:
     content_only && kind == PackKind::Mod && source == SourceId::Horizon
 }
 
+fn shows_native_github_importer(content_only: bool, kind: PackKind, has_java: bool) -> bool {
+    !content_only && kind == PackKind::Mod && !has_java
+}
+
 /// Native registry bundles are shown in Mod Workshop, not in the .hmod Content workspace.
 fn is_content_registry_entry(entry: &installed::Entry) -> bool {
     entry.source != SourceId::Horizon
@@ -1137,7 +1141,11 @@ impl Launcher {
         }
         body = body.child(controls);
         // Native mods from a GitHub link: Horizon instances, on the Mods tab.
-        if self.mods.kind == PackKind::Mod && self.mods.java.is_none() {
+        if shows_native_github_importer(
+            self.mods.content_only,
+            self.mods.kind,
+            self.mods.java.is_some(),
+        ) {
             body = body.child(self.github_panel(cx));
         }
         body = body.children(registry_sort);
@@ -1938,6 +1946,14 @@ fn source_switch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_only_filter_hides_native_github_importer() {
+        assert!(!shows_native_github_importer(true, PackKind::Mod, false));
+        assert!(shows_native_github_importer(false, PackKind::Mod, false));
+        assert!(!shows_native_github_importer(false, PackKind::Modpack, false));
+        assert!(!shows_native_github_importer(false, PackKind::Mod, true));
+    }
 
     #[test]
     fn content_only_filter_is_scoped_to_horizon_registry_mods() {
