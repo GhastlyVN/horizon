@@ -877,6 +877,8 @@ impl Audio {
         } else {
             Err("no output on a dedicated server".into())
         };
+        // The no-audio build's stub makes the success arm unreachable.
+        #[allow(unreachable_code)]
         let (stream, live) = match opened {
             Ok(v) => (Some(v), true),
             Err(e) => {
