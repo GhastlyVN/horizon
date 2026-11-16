@@ -16,6 +16,11 @@ on:
       - crates/horizon-client/**
   schedule:
     - cron: '*/10 * * * *'
+  pull_request:
+    paths:
+      - .github/workflows/game-nightly.yml
+      - tools/ci/apply_elyby_patch.py
+      - crates/horizon-client-render/**
   workflow_dispatch:
     inputs:
       force:
@@ -32,6 +37,7 @@ concurrency:
 
 jobs:
   detect:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -104,9 +110,68 @@ jobs:
             echo "### Already mirrored: $version — nothing to do" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  patch-check:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: elyby-upstream-patch-check
+      - id: version
+        name: Resolve the upstream Nightly version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title=$(gh api repos/horizon-rust/horizon/releases/tags/nightly --jq '.name')
+          version=$(python - "$title" <<'PY'
+          import re, sys
+          match = re.fullmatch(r"Nightly (\\d{4}-\\d{2}-\\d{2}) · ([0-9a-f]{7,40})", sys.argv[1])
+          if not match:
+              raise SystemExit(f"Unexpected upstream Nightly title: {sys.argv[1]!r}")
+          print(f"nightly-{match.group(1)}-{match.group(2)}")
+          PY
+          )
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - name: Download and verify the exact upstream source archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../upstream ../upstream-source
+          gh release download nightly -R horizon-rust/horizon \
+            --pattern 'horizon-source.tar.gz' \
+            --pattern 'SHA256SUMS' \
+            --pattern 'SHA256SUMS.v2.sig' \
+            --dir ../upstream
+          cargo run --locked --quiet -p horizon-release-sign -- verify \
+            --tag nightly --nightly-version "$VERSION" \
+            --only horizon-source.tar.gz ../upstream
+          tar -xzf ../upstream/horizon-source.tar.gz --strip-components=1 -C ../upstream-source
+          test -f ../upstream-source/Cargo.toml
+          python tools/ci/apply_elyby_patch.py ../upstream-source
+      - name: Compile and test the patched Ely.by code
+        env:
+          HORIZON_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          cd ../upstream-source
+          cargo test --locked -p horizon-client-render ely
+
   build:
     needs: detect
-    if: needs.detect.outputs.build == 'true'
+    if: github.event_name != 'pull_request' && needs.detect.outputs.build == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     permissions:
