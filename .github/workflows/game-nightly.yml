@@ -142,11 +142,20 @@ jobs:
           print(f"nightly-{match.group(1)}-{match.group(2)}")
           PY
           )
+          ref=$(gh api repos/horizon-rust/horizon/git/ref/tags/nightly)
+          upstream_sha=$(jq -r '.object.sha' <<< "$ref")
+          if [[ "$(jq -r '.object.type' <<< "$ref")" == tag ]]; then
+            upstream_sha=$(gh api "repos/horizon-rust/horizon/git/tags/$upstream_sha" --jq '.object.sha')
+          fi
+          short=${version##*-}
+          [[ "$upstream_sha" == "$short"* ]] || { echo "::error::Nightly title and tag commit disagree"; exit 1; }
           echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
       - name: Download and verify the exact upstream source archive
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.value }}
+          UPSTREAM_SHA: ${{ steps.version.outputs.upstream_sha }}
         run: |
           set -euo pipefail
           mkdir -p ../upstream ../upstream-source
@@ -160,10 +169,18 @@ jobs:
             --only horizon-source.tar.gz ../upstream
           tar -xzf ../upstream/horizon-source.tar.gz --strip-components=1 -C ../upstream-source
           test -f ../upstream-source/Cargo.toml
+          git -C ../upstream-source init
+          git -C ../upstream-source config user.name "github-actions[bot]"
+          git -C ../upstream-source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C ../upstream-source add -A
+          git -C ../upstream-source -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Upstream Nightly $UPSTREAM_SHA"
           python tools/ci/apply_elyby_patch.py ../upstream-source
+          git -C ../upstream-source add -A
+          git -C ../upstream-source -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Apply Ely.by session integration"
       - name: Compile and test the patched Ely.by code
         env:
           HORIZON_VERSION: ${{ steps.version.outputs.value }}
+          HORIZON_GAME_BUILD_ID: ${{ steps.version.outputs.upstream_sha }}
         run: |
           set -euo pipefail
           cd ../upstream-source
@@ -184,6 +201,7 @@ jobs:
       RUSTFLAGS: -C target-feature=+crt-static
       HORIZON_VERSION: ${{ needs.detect.outputs.version }}
       HORIZON_NIGHTLY: ${{ needs.detect.outputs.date }} ${{ needs.detect.outputs.short }}
+      HORIZON_GAME_BUILD_ID: ${{ needs.detect.outputs.upstream_sha }}
       NIGHTLY_VERSION: ${{ needs.detect.outputs.version }}
     steps:
       - uses: actions/checkout@v4
