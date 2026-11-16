@@ -217,7 +217,8 @@ class ElybyNightlyWorkflowTests(unittest.TestCase):
         self.assertIn("No account token is included in this release.", workflow)
 
     def test_elyby_patch_fails_closed_on_unexpected_upstream_layout(self):
-        patch = (ROOT / "tools" / "ci" / "apply_elyby_patch.py").read_text()
+        root = Path(__file__).resolve().parents[1]
+        patch = (root / "tools" / "ci" / "apply_elyby_patch.py").read_text()
         self.assertIn("def replace_once", patch)
         self.assertIn("join_ely_server_once", patch)
         self.assertIn("ely_profile_textures", patch)
