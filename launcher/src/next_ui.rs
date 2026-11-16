@@ -1367,6 +1367,11 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
         .size_full()
         .bg(t.page)
         .font_family(theme::FONT)
+        .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, _, _| {
+            if event.keystroke.key == "tab" {
+                KEYBOARD.store(true, Ordering::Relaxed);
+            }
+        }))
         .child(navigation)
         .child(page);
     // Preserve file-drop import, background build logs, account ownership gating and the
