@@ -388,18 +388,14 @@ fn merge_fork_nightlies(
         other => return other,
     };
     merged.retain(|release| {
-        !horizon_release_sign::is_nightly(
-            release["tag_name"].as_str().unwrap_or_default(),
-        )
+        !horizon_release_sign::is_nightly(release["tag_name"].as_str().unwrap_or_default())
     });
     merged.extend(
         fork.as_array()
             .into_iter()
             .flatten()
             .filter(|release| {
-                horizon_release_sign::is_nightly(
-                    release["tag_name"].as_str().unwrap_or_default(),
-                )
+                horizon_release_sign::is_nightly(release["tag_name"].as_str().unwrap_or_default())
             })
             .cloned(),
     );
