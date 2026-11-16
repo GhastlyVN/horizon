@@ -4,5 +4,5 @@
 # Changing this file needs Ludovic's review (.github/CODEOWNERS).
 MU4oiIQcCxkZvbwSjjXs7SySCuM6ywRQ3nGaJYZG0gw=
 # Signing key of this fork: its launcher releases and Ely.by-enabled Windows Nightlies
-# (.github/workflows/launcher.yml and game-nightly.yml).
+# (.github/workflows/windows-exe.yml and game-nightly.yml).
 9Cc/GAOZsMlocIwykn4s/JxLAuzLkRU84pArMGuSbk4=
