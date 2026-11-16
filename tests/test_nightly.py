@@ -202,8 +202,8 @@ class ElybyNightlyWorkflowTests(unittest.TestCase):
         self.assertIn("current_title", workflow)
         self.assertIn("NIGHTLY_VERSION", workflow)
         self.assertIn("SHA256SUMS.v2.sig", workflow)
-        self.assertIn('gh release create "$VERSION"', workflow)
-        self.assertIn('gh release create nightly', workflow)
+        self.assertIn('gh release create "elyby-$VERSION"', workflow)
+        self.assertIn('gh release create elyby-nightly', workflow)
 
     def test_fork_nightly_verifies_upstream_before_reusing_exporters(self):
         workflow = (WORKFLOWS / "game-nightly.yml").read_text()
