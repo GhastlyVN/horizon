@@ -131,7 +131,7 @@ jobs:
         with:
           shared-key: elyby-game-nightly-windows
 
-      - name: Download and verify upstream's signed Nightly exporters
+      - name: Download and verify upstream Nightly source and Windows exporters
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.detect.outputs.version }}
@@ -139,37 +139,59 @@ jobs:
           set -euo pipefail
           mkdir -p ../upstream
           gh release download nightly -R horizon-rust/horizon \
+            --pattern 'horizon-source.tar.gz' \
             --pattern 'horizon-windows-x64.zip' \
             --pattern 'SHA256SUMS' \
             --pattern 'SHA256SUMS.v2.sig' \
             --dir ../upstream
           cargo run --locked --quiet -p horizon-release-sign -- verify \
             --tag nightly --nightly-version "$VERSION" \
+            --only horizon-source.tar.gz ../upstream
+          cargo run --locked --quiet -p horizon-release-sign -- verify \
+            --tag nightly --nightly-version "$VERSION" \
             --only horizon-windows-x64.zip ../upstream
 
-      - name: Read exporters from the verified upstream archive
+      - name: Extract upstream source, apply Ely.by support, and read exporters
         run: |
           set -euo pipefail
+          rm -rf ../upstream-source
+          mkdir -p ../upstream-source
+          tar -xzf ../upstream/horizon-source.tar.gz --strip-components=1 -C ../upstream-source
+          test -f ../upstream-source/Cargo.toml
+          python tools/ci/apply_elyby_patch.py ../upstream-source
+
+          rm -rf ../upstream-source/exporters
           python - <<'PY'
           import os, zipfile
           archive = "../upstream/horizon-windows-x64.zip"
+          root = os.path.abspath("../upstream-source/exporters")
           with zipfile.ZipFile(archive) as z:
               names = [n for n in z.namelist() if "/exporters/" in n]
               assert names, "no exporters folder in upstream's verified Nightly archive"
               for name in names:
-                  target = os.path.join("exporters", name.split("exporters/", 1)[1])
+                  relative = name.split("exporters/", 1)[1]
+                  target = os.path.abspath(os.path.join(root, relative))
+                  if os.path.commonpath([root, target]) != root:
+                      raise RuntimeError(f"unsafe exporter path: {name}")
                   if name.endswith("/"):
                       os.makedirs(target, exist_ok=True)
                       continue
                   os.makedirs(os.path.dirname(target), exist_ok=True)
-                  with open(target, "wb") as f:
-                      f.write(z.read(name))
-          assert os.path.isfile("exporters/manifest.json"), "upstream Nightly has no exporters/manifest.json"
+                  with open(target, "wb") as output:
+                      output.write(z.read(name))
+          assert os.path.isfile(os.path.join(root, "manifest.json")), "upstream Nightly has no exporters/manifest.json"
           PY
 
-      - name: Build the Ely.by-enabled game and its tools
+      - name: Test the Ely.by session and skin patch
         run: |
           set -euo pipefail
+          cd ../upstream-source
+          cargo test --locked -p horizon-client-render ely
+
+      - name: Build the patched upstream game and its tools
+        run: |
+          set -euo pipefail
+          cd ../upstream-source
           cargo build --release --locked \
             -p horizon-client -p horizon-client-lib --bin horizon-client --bin horizon-ctl \
             -p horizon-prepare --bin horizon-prepare -p horizon-server --bin horizon-server
@@ -186,6 +208,7 @@ jobs:
       - name: Only system libraries
         run: |
           set -euo pipefail
+          cd ../upstream-source
           for binary in horizon-client horizon-ctl horizon-prepare horizon-server; do
             python tools/check_imports.py "$BIN/$binary.exe"
           done
@@ -193,6 +216,7 @@ jobs:
       - name: Package the Windows game
         run: |
           set -euo pipefail
+          cd ../upstream-source
           mkdir -p dist
           cargo run --locked -p xtask -- package "$BIN/horizon-client.exe" "dist/horizon-windows-x64"
           7z a -tzip "dist/horizon-windows-x64.zip" "dist/horizon-windows-x64" > /dev/null
@@ -207,14 +231,14 @@ jobs:
           NIGHTLY_VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          bash tools/ci/sign_release.sh elyby-nightly dist/horizon-windows-x64.zip
+          bash tools/ci/sign_release.sh elyby-nightly ../upstream-source/dist/horizon-windows-x64.zip
 
       - name: Verify the signatures exactly as the launcher does
         run: |
           set -euo pipefail
-          cargo run --locked --quiet -p horizon-release-sign -- verify --tag elyby-nightly dist
+          cargo run --locked --quiet -p horizon-release-sign -- verify --tag elyby-nightly ../upstream-source/dist
           cargo run --locked --quiet -p horizon-release-sign -- verify \
-            --tag elyby-nightly --nightly-version "$NIGHTLY_VERSION" dist
+            --tag elyby-nightly --nightly-version "$NIGHTLY_VERSION" ../upstream-source/dist
 
       - name: Publish the dated Nightly and move the current channel tag
         env:
@@ -227,12 +251,13 @@ jobs:
         run: |
           set -euo pipefail
           fork_sha=$(git rev-parse HEAD)
-          cat > dist/nightly-notes.md <<EOF
-          $TITLE — Ely.by-enabled Windows build.
+          dist=../upstream-source/dist
+          cat > "$dist/nightly-notes.md" <<EOF
+          $TITLE — Ely.by-enabled Windows build from upstream source.
 
           Upstream Nightly: https://github.com/horizon-rust/horizon/releases/tag/nightly
-          Upstream commit: $UPSTREAM_SHA
-          Fork build commit: $fork_sha
+          Upstream source commit: $UPSTREAM_SHA
+          Ely.by patch commit: $fork_sha
 
           The game receives each player's short-lived Ely.by session from Horizon Launcher at runtime.
           No account token is included in this release.
@@ -242,11 +267,11 @@ jobs:
           # `nightly` was not, the next scheduled run must be able to finish publishing.
           gh release delete "elyby-$VERSION" --yes --cleanup-tag 2>/dev/null || true
           gh release create "elyby-$VERSION" --prerelease --latest=false --target "$fork_sha" \
-            --title "$TITLE" --notes-file dist/nightly-notes.md \
-            dist/horizon-windows-x64.zip dist/SHA256SUMS dist/SHA256SUMS.sig dist/SHA256SUMS.v2.sig
+            --title "$TITLE" --notes-file "$dist/nightly-notes.md" \
+            "$dist/horizon-windows-x64.zip" "$dist/SHA256SUMS" "$dist/SHA256SUMS.sig" "$dist/SHA256SUMS.v2.sig"
 
           gh release delete elyby-nightly --yes --cleanup-tag 2>/dev/null || true
           gh release create elyby-nightly --prerelease --latest=false --target "$fork_sha" \
-            --title "$TITLE" --notes-file dist/nightly-notes.md \
-            dist/horizon-windows-x64.zip dist/SHA256SUMS dist/SHA256SUMS.sig dist/SHA256SUMS.v2.sig
-          echo "Published $VERSION from upstream $UPSTREAM_SHA with fork source $fork_sha" >> "$GITHUB_STEP_SUMMARY"
+            --title "$TITLE" --notes-file "$dist/nightly-notes.md" \
+            "$dist/horizon-windows-x64.zip" "$dist/SHA256SUMS" "$dist/SHA256SUMS.sig" "$dist/SHA256SUMS.v2.sig"
+          echo "Published $VERSION from upstream source $UPSTREAM_SHA with Ely.by patch $fork_sha" >> "$GITHUB_STEP_SUMMARY"
