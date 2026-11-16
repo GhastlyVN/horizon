@@ -1951,7 +1951,11 @@ mod tests {
     fn content_only_filter_hides_native_github_importer() {
         assert!(!shows_native_github_importer(true, PackKind::Mod, false));
         assert!(shows_native_github_importer(false, PackKind::Mod, false));
-        assert!(!shows_native_github_importer(false, PackKind::Modpack, false));
+        assert!(!shows_native_github_importer(
+            false,
+            PackKind::Modpack,
+            false
+        ));
         assert!(!shows_native_github_importer(false, PackKind::Mod, true));
     }
 
