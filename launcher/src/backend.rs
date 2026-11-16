@@ -380,10 +380,7 @@ fn release_list() -> Result<serde_json::Value, String> {
 
 /// Replace upstream Nightlies with this fork's Nightlies while retaining all ordinary upstream
 /// releases. The caller uses this only on Windows, where the fork publishes an Ely.by-enabled build.
-fn merge_fork_nightlies(
-    upstream: serde_json::Value,
-    fork: serde_json::Value,
-) -> serde_json::Value {
+fn merge_fork_nightlies(upstream: serde_json::Value, fork: serde_json::Value) -> serde_json::Value {
     let mut merged = match upstream {
         serde_json::Value::Array(releases) => releases,
         other => return other,
@@ -480,8 +477,8 @@ pub(crate) fn game_releases(list: &serde_json::Value) -> Vec<Release> {
         if horizon_release_sign::is_nightly(&r.tag) {
             let version = crate::nightly::version_of(r);
             let tag = std::mem::replace(&mut r.tag, version);
-            r.prerelease = tag != horizon_release_sign::NIGHTLY
-                && tag != horizon_release_sign::ELYBY_NIGHTLY;
+            r.prerelease =
+                tag != horizon_release_sign::NIGHTLY && tag != horizon_release_sign::ELYBY_NIGHTLY;
             r.nightly = Some(tag);
         }
     }
