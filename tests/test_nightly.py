@@ -198,6 +198,8 @@ class ElybyNightlyWorkflowTests(unittest.TestCase):
     def test_fork_nightly_tracks_upstream_and_only_publishes_when_changed(self):
         workflow = (WORKFLOWS / "game-nightly.yml").read_text()
         self.assertIn("cron: '*/10 * * * *'", workflow)
+        self.assertIn("github.event_name == 'push'", workflow)
+        self.assertIn("paths:", workflow)
         self.assertIn("repos/horizon-rust/horizon/releases/tags/nightly", workflow)
         self.assertIn("current_title", workflow)
         self.assertIn("NIGHTLY_VERSION", workflow)
