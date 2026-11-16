@@ -25,7 +25,9 @@ done
 
 nightly_version=${NIGHTLY_VERSION:-}
 if [[ -n "$nightly_version" ]]; then
-  [[ "$tag" == nightly ]] || { echo "NIGHTLY_VERSION is only valid when signing the nightly channel" >&2; exit 1; }
+  [[ "$tag" == nightly || "$tag" == elyby-nightly ]] || {
+    echo "NIGHTLY_VERSION is only valid when signing a Nightly channel" >&2; exit 1;
+  }
   [[ "$nightly_version" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]{7,40}$ ]] || {
     echo "NIGHTLY_VERSION must be nightly-<date>-<commit>" >&2; exit 1;
   }
