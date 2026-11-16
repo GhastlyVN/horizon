@@ -12,9 +12,12 @@ use std::sync::{Arc, Mutex};
 /// The Horizon game's releases, the mixin registry and links.json: the upstream repository
 /// publishes them, so the game and the launcher both update from it.
 pub const REPO: &str = "horizon-rust/horizon";
-/// The launcher's own releases, published by this repo: the launcher self-updates from them
-/// ([`launcher_releases_in`]) while the game stays on [`REPO`].
-pub const LAUNCHER_REPO: &str = "nguyenphuck2468-tech/horizon";
+/// The launcher's own releases, published by this fork: the launcher self-updates from them
+/// ([`launcher_releases_in`]).
+pub const LAUNCHER_REPO: &str = "GhastlyVN/horizon";
+/// The Nightly source for this platform. Windows receives this fork's Ely.by-enabled game build;
+/// other platforms continue to use the upstream Nightly until this fork publishes their builds.
+pub const NIGHTLY_REPO: &str = if cfg!(windows) { LAUNCHER_REPO } else { REPO };
 pub const README_URL: &str = "https://github.com/horizon-rust/horizon/blob/main/launcher/README.md";
 /// The players' page on connecting an AI agent (the website's docs/agents.md).
 pub const AGENT_DOCS_URL: &str = "https://playhorizon.dev/docs/agents";
@@ -358,12 +361,52 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     release_order(a).cmp(&release_order(b))
 }
 
-/// Every published release of the game repository ([`REPO`]), as GitHub's JSON (kept on disk with
-/// its ETag, and read through Kira's mirror past GitHub's rate limit: [`crate::github`]).
+/// Upstream's game releases, plus this fork's Ely.by-enabled Nightlies on Windows. The ordinary
+/// game releases remain upstream; only Nightly is redirected to this repository on Windows.
 fn release_list() -> Result<serde_json::Value, String> {
-    crate::github::json(&format!(
+    let upstream = crate::github::json(&format!(
         "https://api.github.com/repos/{REPO}/releases?per_page=100"
-    ))
+    ))?;
+    if cfg!(windows) {
+        let fork = crate::github::json(&format!(
+            "https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"
+        ))?;
+        Ok(merge_fork_nightlies(upstream, fork))
+    } else {
+        Ok(upstream)
+    }
+}
+
+/// Replace upstream Nightlies with this fork's Nightlies while retaining all ordinary upstream
+/// releases. The caller uses this only on Windows, where the fork publishes an Ely.by-enabled build.
+fn merge_fork_nightlies(
+    upstream: serde_json::Value,
+    fork: serde_json::Value,
+) -> serde_json::Value {
+    let Some(upstream) = upstream.as_array() else {
+        return upstream.clone();
+    };
+    let mut merged: Vec<_> = upstream
+        .iter()
+        .filter(|release| {
+            !horizon_release_sign::is_nightly(
+                release["tag_name"].as_str().unwrap_or_default(),
+            )
+        })
+        .cloned()
+        .collect();
+    merged.extend(
+        fork.as_array()
+            .into_iter()
+            .flatten()
+            .filter(|release| {
+                horizon_release_sign::is_nightly(
+                    release["tag_name"].as_str().unwrap_or_default(),
+                )
+            })
+            .cloned(),
+    );
+    serde_json::Value::Array(merged)
 }
 
 /// The launcher's own releases ([`LAUNCHER_REPO`]), as GitHub's JSON (kept on disk like the game's
