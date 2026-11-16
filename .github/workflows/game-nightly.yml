@@ -190,7 +190,7 @@ jobs:
           mkdir -p dist
           cargo run --locked -p xtask -- package "$BIN/horizon-client.exe" "dist/horizon-windows-x64"
           7z a -tzip "dist/horizon-windows-x64.zip" "dist/horizon-windows-x64" > /dev/null
-          if unzip -Z1 "dist/horizon-windows-x64.zip" | grep -E '(^|/)(\\._|__MACOSX/)'; then
+          if unzip -Z1 "dist/horizon-windows-x64.zip" | grep -E '(^|/)(\._|__MACOSX/)'; then
             echo "::error::junk in the zip"; exit 1
           fi
 
