@@ -503,6 +503,8 @@ mod tests {
         );
         assert!(nightly_digest(TONIGHT, asset, Some(sums.as_bytes()), None, &keys).is_err());
         assert!(is_nightly("nightly-2026-10-27") && !is_nightly("v0.2.81"));
+        assert!(is_elyby_nightly("elyby-nightly"));
+        assert!(is_nightly("elyby-nightly-2026-10-28-0c02067"));
     }
 
     #[test]
