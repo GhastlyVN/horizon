@@ -223,6 +223,7 @@ class ElybyNightlyWorkflowTests(unittest.TestCase):
         self.assertIn("join_ely_server_once", patch)
         self.assertIn("ely_profile_textures", patch)
         self.assertIn("expected one upstream anchor", patch)
+        compile(patch, "apply_elyby_patch.py", "exec")
 
 if __name__ == "__main__":
     unittest.main()
