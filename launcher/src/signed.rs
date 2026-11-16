@@ -102,8 +102,9 @@ mod tests {
         let signature = signer.sign("launcher@99.0.0", sums.as_bytes());
         let (other, _) = SigningKey::generate().unwrap();
         let served = |url: &str| -> Result<Option<Vec<u8>>, String> {
-            assert!(url
-                .starts_with("https://github.com/nguyenphuck2468-tech/horizon/releases/download/"));
+            assert!(url.starts_with(&format!(
+                "https://github.com/{LAUNCHER_REPO}/releases/download/"
+            )));
             Ok(Some(
                 if url.ends_with(".sig") {
                     signature.clone()
@@ -192,6 +193,9 @@ mod tests {
             );
             let sums = sums.clone();
             move |url: &str| -> Result<Option<Vec<u8>>, String> {
+                assert!(url.starts_with(&format!(
+                    "https://github.com/{NIGHTLY_REPO}/releases/download/"
+                )));
                 Ok(Some(
                     if url.ends_with(SIGNATURE_V2) {
                         two.clone()
