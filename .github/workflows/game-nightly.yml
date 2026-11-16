@@ -78,7 +78,7 @@ jobs:
 
           current=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/nightly" 2>/dev/null || printf '{}')
           current_title=$(jq -r '.name // empty' <<< "$current")
-          complete=$(jq -r '((.assets // []) | map(.name) | index("horizon-windows-x64.zip") != null) and ((.assets // []) | map(.name) | index("SHA256SUMS.v2.sig") != null)' <<< "$current")
+          complete=$(jq -r '((.assets // []) | map(.name) | index("horizon-windows-x64.zip") != null) and ((.assets // []) | map(.name) | index("SHA256SUMS") != null) and ((.assets // []) | map(.name) | index("SHA256SUMS.sig") != null) and ((.assets // []) | map(.name) | index("SHA256SUMS.v2.sig") != null)' <<< "$current")
           build=true
           if [[ "$FORCE" != true && "$current_title" == "$title" && "$complete" == true ]]; then
             build=false
