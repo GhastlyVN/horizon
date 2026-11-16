@@ -132,7 +132,10 @@ fn check_folder(args: &[String]) -> Result<(), String> {
         }
     };
     let listed = if let Some(asset) = only_asset {
-        let selected: Vec<_> = listed.into_iter().filter(|(name, _)| name == asset).collect();
+        let selected: Vec<_> = listed
+            .into_iter()
+            .filter(|(name, _)| name == asset)
+            .collect();
         if selected.is_empty() {
             return Err(format!("{asset} is not listed in {SUMS}"));
         }
