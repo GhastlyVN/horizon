@@ -233,10 +233,9 @@ jobs:
           No account token is included in this release.
           EOF
 
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            [[ "$FORCE" == true ]] || { echo "::error::release $VERSION already exists; refusing to overwrite"; exit 1; }
-            gh release delete "$VERSION" --yes --cleanup-tag
-          fi
+          # Replace a partial/previous attempt too: if the dated release was created but moving
+          # `nightly` was not, the next scheduled run must be able to finish publishing.
+          gh release delete "$VERSION" --yes --cleanup-tag 2>/dev/null || true
           gh release create "$VERSION" --prerelease --latest=false --target "$fork_sha" \
             --title "$TITLE" --notes-file dist/nightly-notes.md \
             dist/horizon-windows-x64.zip dist/SHA256SUMS dist/SHA256SUMS.sig dist/SHA256SUMS.v2.sig
