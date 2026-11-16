@@ -174,12 +174,16 @@ fn windows_mirror_replaces_only_upstream_nightlies() {
     ]);
     let fork = serde_json::json!([
         {"tag_name":"launcher@0.2.3","name":"Launcher","assets":[]},
-        {"tag_name":"nightly","name":"Ely.by Nightly","assets":[]},
-        {"tag_name":"nightly-2026-11-15-bbbbbbb","name":"Previous Ely.by Nightly","assets":[]}
+        {"tag_name":"elyby-nightly","name":"Ely.by Nightly","assets":[]},
+        {"tag_name":"elyby-nightly-2026-11-15-bbbbbbb","name":"Previous Ely.by Nightly","assets":[]},
+        {"tag_name":"nightly","name":"Fork's inherited upstream Nightly","assets":[]}
     ]);
     let merged = merge_fork_nightlies(upstream, fork);
     let tags: Vec<_> = merged.as_array().unwrap().iter()
         .map(|release| release["tag_name"].as_str().unwrap())
         .collect();
-    assert_eq!(tags, ["v2026.11.15", "nightly", "nightly-2026-11-15-bbbbbbb"]);
+    assert_eq!(
+        tags,
+        ["v2026.11.15", "elyby-nightly", "elyby-nightly-2026-11-15-bbbbbbb"]
+    );
 }
