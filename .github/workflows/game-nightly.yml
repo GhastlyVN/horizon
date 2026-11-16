@@ -8,6 +8,10 @@ run-name: Ely.by Nightly${{ inputs.force && ' (forced)' || '' }}
 # Windows publishes here; Linux and macOS launchers continue to use upstream Nightlies until
 # this repository builds Ely.by-enabled game archives for those platforms.
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/game-nightly.yml
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
@@ -41,7 +45,7 @@ jobs:
       - id: detect
         env:
           GH_TOKEN: ${{ github.token }}
-          FORCE: ${{ inputs.force && 'true' || 'false' }}
+          FORCE: ${{ (inputs.force || github.event_name == 'push') && 'true' || 'false' }}
         shell: bash
         run: |
           set -euo pipefail
