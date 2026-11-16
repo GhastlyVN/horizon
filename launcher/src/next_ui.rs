@@ -12,6 +12,11 @@ fn preview_enabled(value: Option<&str>) -> bool {
     value == Some("1")
 }
 
+/// Only activation keys should trigger a focused workspace/route control.
+fn navigation_activation_key(key: &str) -> bool {
+    matches!(key, "enter" | "space" | " ")
+}
+
 /// Keep the new shell usable on compact laptop and split-screen windows.
 /// Values are deliberately conservative to leave room for the actual page content.
 fn layout_metrics(window_width: f32) -> (f32, f32, f32) {
@@ -677,20 +682,35 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
                 .flex_col()
                 .gap(px(3.))
                 .child(
-                    div()
-                        .id(SharedString::from(format!("next-workspace-{}", entry.id)))
-                        .w_full()
-                        .px(px(12.))
-                        .py(px(9.))
-                        .rounded(px(8.))
-                        .text_size(px(13.))
-                        .text_color(if selected { t.accent } else { t.ink })
-                        .when(selected, |element| element.bg(t.surface))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            select_route(this, primary);
-                            cx.notify();
-                        }))
-                        .child(tr(label(primary))),
+                    keyboard(
+                        div()
+                            .id(SharedString::from(format!("next-workspace-{}", entry.id)))
+                            .role(gpui::Role::Button)
+                            .aria_label(tr(label(primary)))
+                            .aria_selected(selected)
+                            .w_full()
+                            .px(px(12.))
+                            .py(px(9.))
+                            .rounded(px(8.))
+                            .text_size(px(13.))
+                            .text_color(if selected { t.accent } else { t.ink })
+                            .when(selected, |element| element.bg(t.surface))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                select_route(this, primary);
+                                cx.notify();
+                            }))
+                            .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                                KEYBOARD.store(true, Ordering::Relaxed);
+                                if !navigation_activation_key(&event.keystroke.key) {
+                                    return;
+                                }
+                                select_route(this, primary);
+                                cx.stop_propagation();
+                                cx.notify();
+                            }))
+                            .child(tr(label(primary))),
+                        &t,
+                    ),
                 )
                 .children(
                     ROUTES
@@ -699,21 +719,36 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
                         .map(|child| {
                             let route = child.route;
                             let selected = route == active;
-                            div()
-                                .id(SharedString::from(format!("next-route-{}", child.id)))
-                                .w_full()
-                                .pl(px(24.))
-                                .pr(px(12.))
-                                .py(px(7.))
-                                .rounded(px(7.))
-                                .text_size(px(12.))
-                                .text_color(if selected { t.accent } else { t.ink_soft })
-                                .when(selected, |element| element.bg(t.surface))
-                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    select_route(this, route);
-                                    cx.notify();
-                                }))
-                                .child(tr(label(route)))
+                            keyboard(
+                                div()
+                                    .id(SharedString::from(format!("next-route-{}", child.id)))
+                                    .role(gpui::Role::Button)
+                                    .aria_label(tr(label(route)))
+                                    .aria_selected(selected)
+                                    .w_full()
+                                    .pl(px(24.))
+                                    .pr(px(12.))
+                                    .py(px(7.))
+                                    .rounded(px(7.))
+                                    .text_size(px(12.))
+                                    .text_color(if selected { t.accent } else { t.ink_soft })
+                                    .when(selected, |element| element.bg(t.surface))
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        select_route(this, route);
+                                        cx.notify();
+                                    }))
+                                    .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                                        KEYBOARD.store(true, Ordering::Relaxed);
+                                        if !navigation_activation_key(&event.keystroke.key) {
+                                            return;
+                                        }
+                                        select_route(this, route);
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }))
+                                    .child(tr(label(route))),
+                                &t,
+                            )
                         }),
                 ),
         );
@@ -1357,7 +1392,9 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
 
 #[cfg(test)]
 mod tests {
-    use super::{content_only_route, layout_metrics, preview_enabled};
+    use super::{
+        content_only_route, layout_metrics, navigation_activation_key, preview_enabled,
+    };
 
     #[test]
     fn shell_layout_scales_for_compact_and_standard_windows() {
@@ -1406,6 +1443,16 @@ mod tests {
         assert!(content_only_route(Route::InstalledContent));
         assert!(!content_only_route(Route::ModpackManager));
         assert!(!content_only_route(Route::ModWorkshop));
+    }
+
+    #[test]
+    fn workspace_navigation_activates_only_with_enter_or_space() {
+        assert!(navigation_activation_key("enter"));
+        assert!(navigation_activation_key("space"));
+        assert!(navigation_activation_key(" "));
+        for key in ["tab", "escape", "left", "right", "a"] {
+            assert!(!navigation_activation_key(key), "{key}");
+        }
     }
 
     #[test]
