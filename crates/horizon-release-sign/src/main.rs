@@ -3,7 +3,8 @@
 //! job that holds the private key runs only the runner's sha256sum and OpenSSL, no code from the
 //! repository.
 //!
-//!     horizon-release-sign verify --tag v2026.10.19 [--key <base64>] [--publishing] <folder>
+//!     horizon-release-sign verify --tag v2026.10.19 [--nightly-version nightly-YYYY-MM-DD-<sha>]
+//!         [--only <asset>] [--key <base64>] [--publishing] <folder>
 //!     horizon-release-sign keygen --public-out key.pub | gh secret set RELEASE_SIGNING_KEY --env release
 //!
 //! `verify` checks SHA256SUMS.sig and every file SHA256SUMS lists with the keys built in from
@@ -11,7 +12,7 @@
 //! may go out unsigned, or signed with a key nobody can check yet, only while release-keys.txt
 //! lists no key; once it lists one, anything launchers would refuse fails the release.
 
-use horizon_release_sign::{SIGNATURE, SUMS, Sha256, SigningKey, parse_keys, trusted_keys, verify};
+use horizon_release_sign::{SIGNATURE, SIGNATURE_V2, SUMS, Sha256, SigningKey, parse_keys, trusted_keys, verify};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -75,45 +76,67 @@ fn file_hash(path: &Path) -> Result<String, String> {
 /// Checks a folder holding a release's assets, as the launcher does.
 fn check_folder(args: &[String]) -> Result<(), String> {
     let (tag, rest) = tag_of(args)?;
+    let (nightly_versions, rest) = options(&rest, "--nightly-version");
+    let nightly_version = nightly_versions.first();
+    if nightly_version.is_some_and(|v| !horizon_release_sign::is_nightly_build(v)) {
+        return Err("--nightly-version must be nightly-<date>-<commit>".into());
+    }
+    let (only_assets, rest) = options(&rest, "--only");
+    let only_asset = only_assets.first();
     let (keys, rest) = options(&rest, "--key");
     let publishing = rest.iter().any(|a| a == "--publishing");
     let folder = PathBuf::from(
         rest.iter()
-            .find(|a| *a != "--publishing")
+            .find(|a| a != "--publishing")
             .ok_or("verify needs the release's folder")?,
     );
+    let signature_name = if nightly_version.is_some() {
+        SIGNATURE_V2
+    } else {
+        SIGNATURE
+    };
+    let signed_for = nightly_version.map_or(tag.as_str(), String::as_str);
     let keys = if keys.is_empty() {
         trusted_keys()
     } else {
         parse_keys(&keys.join("\n"))?
     };
     let sums = std::fs::read(folder.join(SUMS)).map_err(|e| format!("{SUMS}: {e}"))?;
-    let listed = match std::fs::read_to_string(folder.join(SIGNATURE)) {
-        Ok(signature) if !keys.is_empty() => verify(&tag, &sums, &signature, &keys)?,
+    let listed = match std::fs::read_to_string(folder.join(signature_name)) {
+        Ok(signature) if !keys.is_empty() => verify(signed_for, &sums, &signature, &keys)?,
         Ok(_) if publishing => {
             println!(
-                "::warning::{tag}: signed, but release-keys.txt lists no key yet, so launchers can't check it"
+                "::warning::{signed_for}: signed, but release-keys.txt lists no key yet, so launchers can't check it"
             );
             horizon_release_sign::parse_sums(&String::from_utf8_lossy(&sums))?
         }
         Err(_) if publishing && keys.is_empty() => {
             println!(
-                "::warning::{tag}: published with {SUMS} but unsigned: release-keys.txt lists no key yet"
+                "::warning::{signed_for}: published with {SUMS} but unsigned: release-keys.txt lists no key yet"
             );
             horizon_release_sign::parse_sums(&String::from_utf8_lossy(&sums))?
         }
         Ok(_) => return Err("no key to check the signature with".into()),
         Err(_) => {
             return Err(format!(
-                "{tag} has no {SIGNATURE}: launchers would refuse it (is the release environment's \
+                "{tag} has no {signature_name}: launchers would refuse it (is the release environment's \
                  RELEASE_SIGNING_KEY set?)"
             ));
         }
     };
+    let listed = if let Some(asset) = only_asset {
+        let selected: Vec<_> = listed.into_iter().filter(|(name, _)| name == asset).collect();
+        if selected.is_empty() {
+            return Err(format!("{asset} is not listed in {SUMS}"));
+        }
+        selected
+    } else {
+        listed
+    };
     for (name, hex) in &listed {
         horizon_release_sign::check(name, hex, &file_hash(&folder.join(name))?)?;
     }
-    println!("{tag}: {} files match {SUMS}", listed.len());
+    println!("{signed_for}: {} files match {SUMS}", listed.len());
     Ok(())
 }
 
