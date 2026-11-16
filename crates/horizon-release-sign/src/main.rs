@@ -7,12 +7,14 @@
 //!         [--only <asset>] [--key <base64>] [--publishing] <folder>
 //!     horizon-release-sign keygen --public-out key.pub | gh secret set RELEASE_SIGNING_KEY --env release
 //!
-//! `verify` checks SHA256SUMS.sig and every file SHA256SUMS lists with the keys built in from
-//! release-keys.txt (or `--key`), as the launcher does. With `--publishing` (release.yml) a release
+//! `verify` checks SHA256SUMS.sig (or SHA256SUMS.v2.sig with `--nightly-version`) and every
+//! selected file SHA256SUMS lists with the keys built in from release-keys.txt (or `--key`). With `--publishing` (release.yml) a release
 //! may go out unsigned, or signed with a key nobody can check yet, only while release-keys.txt
 //! lists no key; once it lists one, anything launchers would refuse fails the release.
 
-use horizon_release_sign::{SIGNATURE, SIGNATURE_V2, SUMS, Sha256, SigningKey, parse_keys, trusted_keys, verify};
+use horizon_release_sign::{
+    SIGNATURE, SIGNATURE_V2, SUMS, Sha256, SigningKey, parse_keys, trusted_keys, verify,
+};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -80,6 +82,9 @@ fn check_folder(args: &[String]) -> Result<(), String> {
     let nightly_version = nightly_versions.first();
     if nightly_version.is_some_and(|v| !horizon_release_sign::is_nightly_build(v)) {
         return Err("--nightly-version must be nightly-<date>-<commit>".into());
+    }
+    if nightly_version.is_some() && !horizon_release_sign::is_nightly(&tag) {
+        return Err("--nightly-version can only verify a Nightly release".into());
     }
     let (only_assets, rest) = options(&rest, "--only");
     let only_asset = only_assets.first();
