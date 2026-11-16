@@ -12,6 +12,9 @@ on:
     branches: [main]
     paths:
       - .github/workflows/game-nightly.yml
+      - tools/ci/apply_elyby_patch.py
+      - tools/ci/sign_release.sh
+      - crates/horizon-release-sign/**
       - crates/horizon-client-render/**
       - crates/horizon-client/**
   schedule:
@@ -20,6 +23,8 @@ on:
     paths:
       - .github/workflows/game-nightly.yml
       - tools/ci/apply_elyby_patch.py
+      - tools/ci/sign_release.sh
+      - crates/horizon-release-sign/**
       - crates/horizon-client-render/**
   workflow_dispatch:
     inputs:
