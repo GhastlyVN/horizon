@@ -106,8 +106,6 @@ class ScheduledTests(unittest.TestCase):
         self.assertIn("### Not merged yet (2)\n- Fix 1 (#1) by dev1, at h1, picked by kacpherek", text)
         self.assertIn("### Left out (1)", text)
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
@@ -209,7 +207,10 @@ class ElybyNightlyWorkflowTests(unittest.TestCase):
 
     def test_fork_nightly_verifies_upstream_before_reusing_exporters(self):
         workflow = (WORKFLOWS / "game-nightly.yml").read_text()
-        self.assertIn("--nightly-version "$VERSION"", workflow)
+        self.assertIn('--nightly-version "$VERSION"', workflow)
         self.assertIn("--only horizon-windows-x64.zip", workflow)
         self.assertIn("Read exporters from the verified upstream archive", workflow)
         self.assertIn("No account token is included in this release.", workflow)
+
+if __name__ == "__main__":
+    unittest.main()
