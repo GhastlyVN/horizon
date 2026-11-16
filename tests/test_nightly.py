@@ -194,3 +194,22 @@ class PruneBuildsTests(unittest.TestCase):
         self.assertIn("prune-builds --days 7", step)
         self.assertIn("GITHUB_STEP_SUMMARY", step)
 
+
+
+class ElybyNightlyWorkflowTests(unittest.TestCase):
+    def test_fork_nightly_tracks_upstream_and_only_publishes_when_changed(self):
+        workflow = (WORKFLOWS / "game-nightly.yml").read_text()
+        self.assertIn("cron: '*/10 * * * *'", workflow)
+        self.assertIn("repos/horizon-rust/horizon/releases/tags/nightly", workflow)
+        self.assertIn("current_title", workflow)
+        self.assertIn("NIGHTLY_VERSION", workflow)
+        self.assertIn("SHA256SUMS.v2.sig", workflow)
+        self.assertIn('gh release create "$VERSION"', workflow)
+        self.assertIn('gh release create nightly', workflow)
+
+    def test_fork_nightly_verifies_upstream_before_reusing_exporters(self):
+        workflow = (WORKFLOWS / "game-nightly.yml").read_text()
+        self.assertIn("--nightly-version "$VERSION"", workflow)
+        self.assertIn("--only horizon-windows-x64.zip", workflow)
+        self.assertIn("Read exporters from the verified upstream archive", workflow)
+        self.assertIn("No account token is included in this release.", workflow)
