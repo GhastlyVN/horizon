@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Signs a release (docs/release-flow.md, "Signed checksums"): writes SHA256SUMS for the files given, then
-# SHA256SUMS.sig beside them, one base64 Ed25519 signature per line over "horizon release <tag>\\n" + SHA256SUMS,
+# SHA256SUMS.sig beside them, one base64 Ed25519 signature per line over "horizon release <tag>\n" + SHA256SUMS,
 # for every key set in RELEASE_SIGNING_KEY and RELEASE_SIGNING_KEY_NEXT (base64 PKCS#8, the `release`
 # environment's secrets). The job that holds the private key runs only the runner's sha256sum and OpenSSL.
 # For a Nightly, NIGHTLY_VERSION additionally writes SHA256SUMS.v2.sig over the same checksums, bound to
@@ -33,7 +33,7 @@ fi
 
 sign_for() { # tag and output file
   local signed_tag=$1 output=$2
-  { printf 'horizon release %s\\n' "$signed_tag"; cat "$dir/SHA256SUMS"; } > "$work/message"
+  { printf 'horizon release %s\n' "$signed_tag"; cat "$dir/SHA256SUMS"; } > "$work/message"
   rm -f "$dir/$output"
   if [[ -n "${EPHEMERAL:-}" ]]; then
     if [[ ! -f "$work/ephemeral.key" ]]; then
@@ -42,7 +42,7 @@ sign_for() { # tag and output file
     fi
     "$openssl" pkeyutl -sign -rawin -inkey "$work/ephemeral.key" -keyform DER \
       -in "$work/message" -out "$work/signature"
-    base64 < "$work/signature" | tr -d '\\n' >> "$dir/$output"
+    base64 < "$work/signature" | tr -d '\n' >> "$dir/$output"
     echo >> "$dir/$output"
     rm -f "$work/signature"
   else
@@ -52,7 +52,7 @@ sign_for() { # tag and output file
         printf '%s' "${!name}" | base64 --decode > "$work/key"
         "$openssl" pkeyutl -sign -rawin -inkey "$work/key" -keyform DER \
           -in "$work/message" -out "$work/signature"
-        base64 < "$work/signature" | tr -d '\\n' >> "$dir/$output"
+        base64 < "$work/signature" | tr -d '\n' >> "$dir/$output"
         echo >> "$dir/$output"
         rm -f "$work/key" "$work/signature"
       fi
