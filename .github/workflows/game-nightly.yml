@@ -218,6 +218,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.detect.outputs.version }}
+          UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
         run: |
           set -euo pipefail
           mkdir -p ../upstream
@@ -241,7 +242,14 @@ jobs:
           mkdir -p ../upstream-source
           tar -xzf ../upstream/horizon-source.tar.gz --strip-components=1 -C ../upstream-source
           test -f ../upstream-source/Cargo.toml
+          git -C ../upstream-source init
+          git -C ../upstream-source config user.name "github-actions[bot]"
+          git -C ../upstream-source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C ../upstream-source add -A
+          git -C ../upstream-source -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Upstream Nightly $UPSTREAM_SHA"
           python tools/ci/apply_elyby_patch.py ../upstream-source
+          git -C ../upstream-source add -A
+          git -C ../upstream-source -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Apply Ely.by session integration"
 
           rm -rf ../upstream-source/exporters
           python - <<'PY'
