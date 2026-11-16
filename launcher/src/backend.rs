@@ -383,18 +383,15 @@ fn merge_fork_nightlies(
     upstream: serde_json::Value,
     fork: serde_json::Value,
 ) -> serde_json::Value {
-    let Some(upstream) = upstream.as_array() else {
-        return upstream.clone();
+    let mut merged = match upstream {
+        serde_json::Value::Array(releases) => releases,
+        other => return other,
     };
-    let mut merged: Vec<_> = upstream
-        .iter()
-        .filter(|release| {
-            !horizon_release_sign::is_nightly(
-                release["tag_name"].as_str().unwrap_or_default(),
-            )
-        })
-        .cloned()
-        .collect();
+    merged.retain(|release| {
+        !horizon_release_sign::is_nightly(
+            release["tag_name"].as_str().unwrap_or_default(),
+        )
+    });
     merged.extend(
         fork.as_array()
             .into_iter()
