@@ -164,7 +164,6 @@ fn failed_launcher_fallback_keeps_game_result_and_checks_stay_fresh() {
     assert_eq!(requests.load(Ordering::Relaxed), 2);
 }
 
-
 #[test]
 fn windows_mirror_replaces_only_upstream_nightlies() {
     let upstream = serde_json::json!([
@@ -187,6 +186,10 @@ fn windows_mirror_replaces_only_upstream_nightlies() {
         .collect();
     assert_eq!(
         tags,
-        ["v2026.11.15", "elyby-nightly", "elyby-nightly-2026-11-15-bbbbbbb"]
+        [
+            "v2026.11.15",
+            "elyby-nightly",
+            "elyby-nightly-2026-11-15-bbbbbbb"
+        ]
     );
 }
