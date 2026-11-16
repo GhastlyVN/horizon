@@ -207,12 +207,21 @@ class ElybyNightlyWorkflowTests(unittest.TestCase):
         self.assertIn('gh release create "elyby-$VERSION"', workflow)
         self.assertIn('gh release create elyby-nightly', workflow)
 
-    def test_fork_nightly_verifies_upstream_before_reusing_exporters(self):
+    def test_fork_nightly_verifies_upstream_then_patches_its_source(self):
         workflow = (WORKFLOWS / "game-nightly.yml").read_text()
         self.assertIn('--nightly-version "$VERSION"', workflow)
+        self.assertIn("--only horizon-source.tar.gz", workflow)
         self.assertIn("--only horizon-windows-x64.zip", workflow)
-        self.assertIn("Read exporters from the verified upstream archive", workflow)
+        self.assertIn("apply_elyby_patch.py", workflow)
+        self.assertIn("Test the Ely.by session and skin patch", workflow)
         self.assertIn("No account token is included in this release.", workflow)
+
+    def test_elyby_patch_fails_closed_on_unexpected_upstream_layout(self):
+        patch = (ROOT / "tools" / "ci" / "apply_elyby_patch.py").read_text()
+        self.assertIn("def replace_once", patch)
+        self.assertIn("join_ely_server_once", patch)
+        self.assertIn("ely_profile_textures", patch)
+        self.assertIn("expected one upstream anchor", patch)
 
 if __name__ == "__main__":
     unittest.main()
