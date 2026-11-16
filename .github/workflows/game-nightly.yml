@@ -208,7 +208,7 @@ jobs:
           set -euo pipefail
           cargo run --locked --quiet -p horizon-release-sign -- verify --tag nightly dist
           cargo run --locked --quiet -p horizon-release-sign -- verify \
-            --tag nightly --nightly-version "$NIGHTLY_VERSION" dist
+            --tag elyby-nightly --nightly-version "$NIGHTLY_VERSION" dist
 
       - name: Publish the dated Nightly and move the current channel tag
         env:
