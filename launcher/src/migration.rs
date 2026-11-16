@@ -353,20 +353,25 @@ fn copy_tree(source: &Path, destination: &Path, result: &mut TreeResult) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_TREE_ID: AtomicU64 = AtomicU64::new(0);
 
     struct TempTree(PathBuf);
 
     impl TempTree {
         fn new() -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let path = std::env::temp_dir()
-                .join(format!("horizon-migration-{}-{nonce}", std::process::id()));
-            fs::create_dir_all(&path).unwrap();
-            Self(path)
+            for _ in 0..128 {
+                let id = NEXT_TEMP_TREE_ID.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir()
+                    .join(format!("horizon-migration-{}-{id}", std::process::id()));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("could not create test directory {}: {error}", path.display()),
+                }
+            }
+            panic!("could not allocate a unique Horizon migration test directory");
         }
     }
 
@@ -500,17 +505,20 @@ mod tests {
         use std::process::Command;
 
         fn junction(link: &Path, target: &Path) {
-            let status = Command::new("cmd")
+            let output = Command::new("cmd")
                 .args(["/C", "mklink", "/J"])
                 .arg(link)
                 .arg(target)
-                .status()
-                .unwrap();
+                .output()
+                .unwrap_or_else(|error| panic!("could not run mklink for {}: {error}", link.display()));
             assert!(
-                status.success(),
-                "could not create junction {} -> {}",
+                output.status.success(),
+                "could not create junction {} -> {} (exit: {:?})\nstdout: {}\nstderr: {}",
                 link.display(),
-                target.display()
+                target.display(),
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
             );
             let metadata = fs::symlink_metadata(link).unwrap();
             assert!(is_link_or_reparse_point(&metadata));
