@@ -90,6 +90,28 @@ pub fn unpack(value: &str, signature: Signature, valid_uris: &[&str]) -> Texture
     out
 }
 
+pub fn ely_profile_textures(profile: &serde_json::Value) -> Textures {
+    const ELY_TEXTURE_URIS: [&str; 8] = [
+        "http://ely.by/storage/skins/",
+        "https://ely.by/storage/skins/",
+        "http://ely.by/storage/cloaks/",
+        "https://ely.by/storage/cloaks/",
+        "http://ely.by/minecraft/skins/",
+        "https://ely.by/minecraft/skins/",
+        "http://ely.by/minecraft/cloaks/",
+        "https://ely.by/minecraft/cloaks/",
+    ];
+    let Some((value, signature)) = parse_profile(profile).textures else {
+        return Textures::default();
+    };
+    let allowed: Vec<&str> = TEXTURE_URIS
+        .iter()
+        .copied()
+        .chain(ELY_TEXTURE_URIS)
+        .collect();
+    unpack(&value, signature, &allowed)
+}
+
 /// The raw JSON body of Ely.by's `/textures/{nickname}` endpoint.
 /// Unlike `/profile/{nickname}`, this endpoint returns the texture payload
 /// itself rather than a GameProfile with a base64-encoded property.
