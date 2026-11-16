@@ -395,7 +395,9 @@ fn merge_fork_nightlies(
             .into_iter()
             .flatten()
             .filter(|release| {
-                horizon_release_sign::is_nightly(release["tag_name"].as_str().unwrap_or_default())
+                horizon_release_sign::is_elyby_nightly(
+                    release["tag_name"].as_str().unwrap_or_default(),
+                )
             })
             .cloned(),
     );
@@ -476,7 +478,8 @@ pub(crate) fn game_releases(list: &serde_json::Value) -> Vec<Release> {
         if horizon_release_sign::is_nightly(&r.tag) {
             let version = crate::nightly::version_of(r);
             let tag = std::mem::replace(&mut r.tag, version);
-            r.prerelease = tag != horizon_release_sign::NIGHTLY;
+            r.prerelease = tag != horizon_release_sign::NIGHTLY
+                && tag != horizon_release_sign::ELYBY_NIGHTLY;
             r.nightly = Some(tag);
         }
     }
