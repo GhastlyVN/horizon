@@ -87,7 +87,7 @@ fn check_folder(args: &[String]) -> Result<(), String> {
     let publishing = rest.iter().any(|a| a == "--publishing");
     let folder = PathBuf::from(
         rest.iter()
-            .find(|a| a != "--publishing")
+            .find(|a| *a != "--publishing")
             .ok_or("verify needs the release's folder")?,
     );
     let signature_name = if nightly_version.is_some() {
