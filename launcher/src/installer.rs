@@ -491,6 +491,11 @@ pub fn needs_launcher_lock(mode: Option<Mode>) -> bool {
     !matches!(mode, Some(Mode::Install))
 }
 
+/// Whether this process is the install setup and must skip launcher-state maintenance.
+pub fn is_setup_install_mode(window_mode: Option<Mode>, quiet_mode: Option<Mode>) -> bool {
+    matches!(quiet_mode.or(window_mode), Some(Mode::Install))
+}
+
 fn quiet_mode_from_args(args: &[String], setup_exe: bool) -> Option<Mode> {
     if !args.iter().any(|arg| arg == "--quiet") {
         return None;
@@ -566,6 +571,21 @@ mod tests {
     fn uninstall_and_normal_launch_keep_the_launcher_instance_lock() {
         assert!(needs_launcher_lock(Some(Mode::Uninstall)));
         assert!(needs_launcher_lock(None));
+    }
+
+    #[test]
+    fn quiet_setup_skips_launcher_state_maintenance() {
+        let args = vec!["setup".to_owned(), "--quiet".to_owned()];
+        let mode = quiet_mode_from_args(&args, true);
+        assert_eq!(mode, Some(Mode::Install));
+        assert!(is_setup_install_mode(None, mode));
+    }
+
+    #[test]
+    fn only_install_modes_skip_launcher_state_maintenance() {
+        assert!(is_setup_install_mode(Some(Mode::Install), None));
+        assert!(!is_setup_install_mode(Some(Mode::Uninstall), None));
+        assert!(!is_setup_install_mode(None, None));
     }
 
     #[test]
