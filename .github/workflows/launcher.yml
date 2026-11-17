@@ -38,6 +38,7 @@ on:
       - 'packaging/macos/**'
       - 'packaging/icons/**'
       - '.github/workflows/launcher.yml'
+      - '.github/workflows/game-nightly.yml'
   push:
     branches: [main, launcher, 'launcher-*', 'build/*']
     paths:
@@ -56,6 +57,7 @@ on:
       - 'packaging/macos/**'
       - 'packaging/icons/**'
       - '.github/workflows/launcher.yml'
+      - '.github/workflows/game-nightly.yml'
   schedule:
     - cron: '7-59/10 * * * *'
   workflow_dispatch:
