@@ -106,8 +106,6 @@ class ScheduledTests(unittest.TestCase):
         self.assertIn("### Not merged yet (2)\n- Fix 1 (#1) by dev1, at h1, picked by kacpherek", text)
         self.assertIn("### Left out (1)", text)
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
@@ -194,3 +192,38 @@ class PruneBuildsTests(unittest.TestCase):
         self.assertIn("prune-builds --days 7", step)
         self.assertIn("GITHUB_STEP_SUMMARY", step)
 
+
+
+class ElybyNightlyWorkflowTests(unittest.TestCase):
+    def test_fork_nightly_tracks_upstream_and_only_publishes_when_changed(self):
+        workflow = (WORKFLOWS / "game-nightly.yml").read_text()
+        self.assertIn("cron: '*/10 * * * *'", workflow)
+        self.assertIn("github.event_name == 'push'", workflow)
+        self.assertIn("paths:", workflow)
+        self.assertIn("repos/horizon-rust/horizon/releases/tags/nightly", workflow)
+        self.assertIn("current_title", workflow)
+        self.assertIn("NIGHTLY_VERSION", workflow)
+        self.assertIn("SHA256SUMS.v2.sig", workflow)
+        self.assertIn('gh release create "elyby-$VERSION"', workflow)
+        self.assertIn('gh release create elyby-nightly', workflow)
+
+    def test_fork_nightly_verifies_upstream_then_patches_its_source(self):
+        workflow = (WORKFLOWS / "game-nightly.yml").read_text()
+        self.assertIn('--nightly-version "$VERSION"', workflow)
+        self.assertIn("--only horizon-source.tar.gz", workflow)
+        self.assertIn("--only horizon-windows-x64.zip", workflow)
+        self.assertIn("apply_elyby_patch.py", workflow)
+        self.assertIn("Test the Ely.by session and skin patch", workflow)
+        self.assertIn("No account token is included in this release.", workflow)
+
+    def test_elyby_patch_fails_closed_on_unexpected_upstream_layout(self):
+        root = Path(__file__).resolve().parents[1]
+        patch = (root / "tools" / "ci" / "apply_elyby_patch.py").read_text()
+        self.assertIn("def replace_once", patch)
+        self.assertIn("join_ely_server_once", patch)
+        self.assertIn("ely_profile_textures", patch)
+        self.assertIn("expected one upstream anchor", patch)
+        compile(patch, "apply_elyby_patch.py", "exec")
+
+if __name__ == "__main__":
+    unittest.main()
