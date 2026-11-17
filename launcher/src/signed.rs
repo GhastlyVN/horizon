@@ -195,7 +195,7 @@ mod tests {
             let sums = sums.clone();
             move |url: &str| -> Result<Option<Vec<u8>>, String> {
                 assert!(url.starts_with(&format!(
-                    "https://github.com/{NIGHTLY_REPO}/releases/download/"
+                    "https://github.com/{REPO}/releases/download/"
                 )));
                 Ok(Some(
                     if url.ends_with(SIGNATURE_V2) {
