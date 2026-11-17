@@ -5518,7 +5518,8 @@ fn main() {
     // Do not run launcher maintenance or load launcher settings from the setup process: it is
     // independent of the running launcher and should not race its update cleanup or state reads.
     #[cfg(windows)]
-    let is_setup_window = installer_mode == Some(horizon_launcher::installer::Mode::Install);
+    let is_setup_window =
+        horizon_launcher::installer::is_setup_install_mode(installer_mode, quiet_mode);
     #[cfg(not(windows))]
     let is_setup_window = false;
     if !is_setup_window {
