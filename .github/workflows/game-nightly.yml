@@ -317,9 +317,21 @@ jobs:
           cd ../upstream-source
           mkdir -p dist
           cargo run --locked -p xtask -- package "$BIN/horizon-client.exe" "dist/horizon-windows-x64"
-          7z a -tzip "dist/horizon-windows-x64.zip" "dist/horizon-windows-x64" > /dev/null
-          if unzip -Z1 "dist/horizon-windows-x64.zip" | grep -E '(^|/)(\._|__MACOSX/)'; then
+          # The launcher takes an archive's single top folder as the version folder and looks for
+          # horizon-client.exe right inside it (launcher/src/backend.rs, install_as). Zip from
+          # dist/ so that folder is horizon-windows-x64/: from the repository root the archive
+          # would instead hold dist/horizon-windows-x64/ and "install latest" fails with
+          # "The download has no horizon-client.exe".
+          (cd dist && 7z a -tzip horizon-windows-x64.zip horizon-windows-x64 > /dev/null)
+          entries=$(unzip -Z1 dist/horizon-windows-x64.zip)
+          if grep -E '(^|/)(\._|__MACOSX/)' <<< "$entries"; then
             echo "::error::junk in the zip"; exit 1
+          fi
+          if grep -vE '^horizon-windows-x64/' <<< "$entries"; then
+            echo "::error::the zip must hold only the horizon-windows-x64/ folder"; exit 1
+          fi
+          if ! grep -qx 'horizon-windows-x64/horizon-client.exe' <<< "$entries"; then
+            echo "::error::the zip has no horizon-windows-x64/horizon-client.exe"; exit 1
           fi
 
       - name: Sign both the Nightly channel and its exact version
