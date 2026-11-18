@@ -13,6 +13,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const AUTHORIZATION_URL: &str = "https://account.ely.by/oauth2/v1";
 const DEVICE_CODE_URL: &str = "https://account.ely.by/api/oauth2/v1/devicecode";
 const DEVICE_VERIFICATION_URL: &str = "https://account.ely.by/device";
+
+/// Only open Ely.by's own HTTPS verification page from a device-code response.
+fn verification_uri(uri: Option<String>) -> String {
+    uri.filter(|value| {
+        value.starts_with("https://account.ely.by/") || value == "https://account.ely.by"
+    })
+    .unwrap_or_else(|| DEVICE_VERIFICATION_URL.to_owned())
+}
 const TOKEN_URL: &str = "https://account.ely.by/api/oauth2/v1/token";
 /// Ely.by's Mojang-shaped profile endpoint (the one ElyHorizon reads): the UUID and name the
 /// game joins with, rather than an account record that happens to carry a UUID.
@@ -144,8 +152,7 @@ pub fn device_code() -> Result<DeviceCode, String> {
     ) {
         (200, Some(user_code), Some(device_code)) => Ok(DeviceCode {
             user_code,
-            verification_uri: string_field(&body, "verification_uri")
-                .unwrap_or_else(|| DEVICE_VERIFICATION_URL.to_owned()),
+            verification_uri: verification_uri(string_field(&body, "verification_uri")),
             interval: bounded_poll_interval(
                 body.get("interval").and_then(Value::as_u64).unwrap_or(5),
             ),
@@ -729,6 +736,28 @@ mod tests {
         );
         // An empty built-in id (no embedded default) yields nothing to use.
         assert_eq!(choose_client_id(Some("  "), None, ""), None);
+    }
+
+    #[test]
+    fn verification_uri_rejects_non_elyby_or_non_https_urls() {
+        assert_eq!(
+            verification_uri(Some("https://account.ely.by/device".into())),
+            "https://account.ely.by/device"
+        );
+        assert_eq!(
+            verification_uri(Some("https://account.ely.by/authorize?x=1".into())),
+            "https://account.ely.by/authorize?x=1"
+        );
+        for bad in [
+            "http://account.ely.by/device",
+            "https://account.ely.by.evil.example/device",
+            "https://evil.example/account.ely.by/device",
+            "javascript:alert(1)",
+            "",
+        ] {
+            assert_eq!(verification_uri(Some(bad.into())), DEVICE_VERIFICATION_URL);
+        }
+        assert_eq!(verification_uri(None), DEVICE_VERIFICATION_URL);
     }
 
     #[test]
