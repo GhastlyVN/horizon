@@ -77,7 +77,10 @@ jobs:
           parsed=$(python3 - "$title" "$upstream_sha" <<'PY'
           import re, sys
           title, sha = sys.argv[1:]
-          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) Â· ([0-9a-f]{7,40})", title)
+          # Upstream's nightly title uses a middle dot (U+00B7). Accept it literally or the
+          # mojibake form (Â·) that appears when the workflow file is interpreted with the
+          # wrong encoding, so we don't fail on encoding surprises.
+          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) [·Â·] ([0-9a-f]{7,40})", title)
           if not match:
               raise SystemExit(f"Unexpected upstream Nightly title: {title!r}")
           date, short = match.groups()
@@ -141,7 +144,8 @@ jobs:
           title=$(gh api repos/horizon-rust/horizon/releases/tags/nightly --jq '.name')
           version=$(python - "$title" <<'PY'
           import re, sys
-          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) Â· ([0-9a-f]{7,40})", sys.argv[1])
+          # Accept the middle dot (U+00B7) or its mojibake form (Â·).
+          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) [·Â·] ([0-9a-f]{7,40})", sys.argv[1])
           if not match:
               raise SystemExit(f"Unexpected upstream Nightly title: {sys.argv[1]!r}")
           print(f"nightly-{match.group(1)}-{match.group(2)}")
