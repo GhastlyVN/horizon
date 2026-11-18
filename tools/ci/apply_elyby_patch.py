@@ -169,14 +169,10 @@ def patch_skins(path: Path) -> None:
     helpers = r'''
 /// Read Ely.by's Mojang-compatible /profile/{nickname} GameProfile response.
 pub fn ely_profile_textures(profile: &serde_json::Value) -> Textures {
-    const ELY_TEXTURE_URIS: [&str; 8] = [
-        "https://ely.by/storage/skins/",
+    const ELY_TEXTURE_URIS: [&str; 4] = [
         "https://ely.by/storage/skins/",
         "https://ely.by/storage/cloaks/",
-        "https://ely.by/storage/cloaks/",
         "https://ely.by/minecraft/skins/",
-        "https://ely.by/minecraft/skins/",
-        "https://ely.by/minecraft/cloaks/",
         "https://ely.by/minecraft/cloaks/",
     ];
     let Some((value, signature)) = parse_profile(profile).textures else {
@@ -192,14 +188,10 @@ pub fn ely_profile_textures(profile: &serde_json::Value) -> Textures {
 
 /// Parse Ely.by's raw /textures/{nickname} response, validating every texture URL.
 pub fn ely_textures_response(payload: &serde_json::Value) -> Textures {
-    const ELY_TEXTURE_URIS: [&str; 8] = [
-        "https://ely.by/storage/skins/",
+    const ELY_TEXTURE_URIS: [&str; 4] = [
         "https://ely.by/storage/skins/",
         "https://ely.by/storage/cloaks/",
-        "https://ely.by/storage/cloaks/",
         "https://ely.by/minecraft/skins/",
-        "https://ely.by/minecraft/skins/",
-        "https://ely.by/minecraft/cloaks/",
         "https://ely.by/minecraft/cloaks/",
     ];
     let allowed = |url: &str| {
