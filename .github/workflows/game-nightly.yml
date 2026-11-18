@@ -1,4 +1,4 @@
-name: Ely.by Nightly
+﻿name: Ely.by Nightly
 run-name: Ely.by Nightly${{ inputs.force && ' (forced)' || '' }}
 # Track upstream's moving Nightly tag. When its title changes, rebuild this fork's Windows game
 # from the exact upstream Nightly source after applying the checked Ely.by session patch.
@@ -77,7 +77,7 @@ jobs:
           parsed=$(python3 - "$title" "$upstream_sha" <<'PY'
           import re, sys
           title, sha = sys.argv[1:]
-          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) · ([0-9a-f]{7,40})", title)
+          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) Â· ([0-9a-f]{7,40})", title)
           if not match:
               raise SystemExit(f"Unexpected upstream Nightly title: {title!r}")
           date, short = match.groups()
@@ -112,7 +112,7 @@ jobs:
           if [[ "$build" == true ]]; then
             echo "### New upstream Nightly detected: $version" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### Already mirrored: $version — nothing to do" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Already mirrored: $version â€” nothing to do" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   patch-check:
@@ -141,7 +141,7 @@ jobs:
           title=$(gh api repos/horizon-rust/horizon/releases/tags/nightly --jq '.name')
           version=$(python - "$title" <<'PY'
           import re, sys
-          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) · ([0-9a-f]{7,40})", sys.argv[1])
+          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) Â· ([0-9a-f]{7,40})", sys.argv[1])
           if not match:
               raise SystemExit(f"Unexpected upstream Nightly title: {sys.argv[1]!r}")
           print(f"nightly-{match.group(1)}-{match.group(2)}")
@@ -314,6 +314,13 @@ jobs:
             python tools/check_imports.py "$BIN/$binary.exe"
           done
 
+      - name: Generate horizon-wasm-std.wasm
+        run: |
+          set -euo pipefail
+          cd ../upstream-source
+          cargo run --locked -p cargo-horizon-mod -- wasm-std target/release/horizon-wasm-std.wasm
+          test -f target/release/horizon-wasm-std.wasm || { echo "::error::horizon-wasm-std.wasm not generated"; exit 1; }
+
       - name: Package the Windows game
         run: |
           set -euo pipefail
@@ -366,7 +373,7 @@ jobs:
           fork_sha=$(git rev-parse HEAD)
           dist=../upstream-source/dist
           cat > "$dist/nightly-notes.md" <<EOF
-          $TITLE — Ely.by-enabled Windows build from upstream source.
+          $TITLE â€” Ely.by-enabled Windows build from upstream source.
 
           Upstream Nightly: https://github.com/horizon-rust/horizon/releases/tag/nightly
           Upstream source commit: $UPSTREAM_SHA
