@@ -290,8 +290,11 @@ jobs:
         run: |
           set -euo pipefail
           cd ../upstream-source
+          # Upstream moved the game's binary from the `horizon-client` crate to `horizon-game`
+          # (crates/horizon-game/Cargo.toml, [[bin]] name = "horizon-client"): `horizon-client`
+          # is a library now and `--bin horizon-client` against it fails to resolve.
           cargo build --release --locked \
-            -p horizon-client -p horizon-client-lib --bin horizon-client --bin horizon-ctl \
+            -p horizon-game -p horizon-client-lib --bin horizon-client --bin horizon-ctl \
             -p horizon-prepare --bin horizon-prepare -p horizon-server --bin horizon-server
           for binary in horizon-client horizon-ctl horizon-prepare horizon-server; do
             test -f "$BIN/$binary.exe" || { echo "::error::$BIN/$binary.exe is missing"; exit 1; }
