@@ -368,7 +368,10 @@ mod tests {
                 match fs::create_dir(&path) {
                     Ok(()) => return Self(path),
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                    Err(error) => panic!("could not create test directory {}: {error}", path.display()),
+                    Err(error) => panic!(
+                        "could not create test directory {}: {error}",
+                        path.display()
+                    ),
                 }
             }
             panic!("could not allocate a unique Horizon migration test directory");
@@ -510,7 +513,9 @@ mod tests {
                 .arg(link)
                 .arg(target)
                 .output()
-                .unwrap_or_else(|error| panic!("could not run mklink for {}: {error}", link.display()));
+                .unwrap_or_else(|error| {
+                    panic!("could not run mklink for {}: {error}", link.display())
+                });
             assert!(
                 output.status.success(),
                 "could not create junction {} -> {} (exit: {:?})\nstdout: {}\nstderr: {}",
