@@ -2004,6 +2004,9 @@ pub struct Launch {
     /// An account the services said owns the game just now, the selected one first: who the
     /// launcher may download the game for.
     pub owner: Option<(Account, Secrets)>,
+    /// A previously confirmed Microsoft owner retained from a no-answer check. This snapshot
+    /// is only for offline Java play; it never authorizes Mojang downloads.
+    pub offline_java_owner: Option<(Account, Secrets)>,
     /// A renewed sign-in the keychain refused to keep: it plays now, and may have to sign in
     /// again next time.
     pub unsaved: Option<String>,
@@ -2021,7 +2024,8 @@ pub fn take_unsaved() -> Option<String> {
 /// Microsoft account confirmed by Minecraft services is separately required for Mojang downloads
 /// and Java Edition. Check the selected account first, then keep looking for a real owner even
 /// after an Ely.by account has supplied the Horizon session. An account with no answer keeps its
-/// last play entitlement for the Horizon gate, but its stale session is not handed to the client.
+/// last play entitlement for the Horizon gate; a previously confirmed Microsoft owner is retained
+/// as a separate snapshot for offline Java play, never for Mojang downloads.
 /// The caller saves `accounts` (renewed names and skins).
 pub fn launch(
     ep: &Endpoints,
@@ -2074,7 +2078,16 @@ pub fn launch(
                 (None, secrets)
             }
             Check::DoesNot(secrets) => (Some(DOES_NOT_OWN.to_string()), secrets),
-            Check::NoAnswer(e, secrets) => (Some(e), secrets),
+            Check::NoAnswer(e, secrets) => {
+                // Preserve the last confirmed owner for Java's offline path while the
+                // account-operation lock still protects this exact credential snapshot.
+                // A lock failure means another operation may be changing the keychain: fail closed.
+                if operation.is_ok() && secrets.owns_minecraft() && !secrets.sign_in_required {
+                    pass.offline_java_owner
+                        .get_or_insert_with(|| (account.clone(), secrets.clone()));
+                }
+                (Some(e), secrets)
+            }
         };
         playable |= secrets.plays() && !(offline_name && is_ely(&secrets));
         if plays {
@@ -2779,36 +2792,16 @@ fn java_player_with(
 ) -> Result<crate::java_launch::Player, String> {
     let pass = launch(ep, client_id, store, accounts).map_err(|e| e.to_string())?;
 
-    // Use the validated credential snapshot directly from Launch when the gate handed one.
-    // This eliminates the TOCTOU window between that validation and launch: the exact
-    // credentials the owner gate checked build the Player, with no second keychain read.
-    // Java Edition must use a confirmed Microsoft owner, not the selected Horizon
-    // session (which may legitimately be Ely.by).
-    let from_pass = pass.owner.or(pass.session);
-    // When no check could answer (no network, a build without configured sign-in), an
-    // account whose last stored answer still says "owns the game" keeps playing offline,
-    // as `launch` kept its session and its play right but handed no credential to renew.
-    // No answer never creates ownership this way (downloads re-check through `launch`
-    // itself, which needs a fresh owner), and an online server re-verifies the session
-    // through `join_server`. Secrets the provider already refused (`sign_in_required`)
-    // and Ely.by sessions (`owns_minecraft` is false) never come back this way.
-    let kept = || {
-        accounts
-            .selected()
-            .into_iter()
-            .chain(
-                accounts
-                    .accounts
-                    .iter()
-                    .filter(|a| Some(*a) != accounts.selected()),
-            )
-            .find_map(|a| {
-                let secrets = secrets_in(store, &a.uuid)?;
-                (secrets.owns_minecraft() && !secrets.sign_in_required)
-                    .then_some((a.clone(), secrets))
-            })
-    };
-    let (account, secrets) = from_pass.or_else(kept).ok_or_else(|| NoOwner.to_string())?;
+    // Use the owner gate's exact credential snapshot. The offline fallback is captured
+    // under the same per-account lock as the no-answer check; never re-read the keychain
+    // after the gate has released that lock.
+    // An offline Java owner is distinct from a current owner: it cannot authorize downloads.
+    // Prefer it to a selected Ely.by Horizon session when another Microsoft owner is offline.
+    let (account, secrets) = pass
+        .owner
+        .or(pass.offline_java_owner)
+        .or(pass.session)
+        .ok_or_else(|| NoOwner.to_string())?;
 
     // Validate provider on the validated snapshot.
     // Ely.by tokens are not compatible with Mojang's Java authentication.

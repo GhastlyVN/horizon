@@ -3898,16 +3898,29 @@ mod tests {
             skin: None,
             cape: None,
         };
-        let secrets = serde_json::from_str(
+        let secrets: account::Secrets = serde_json::from_str(
             r#"{"refresh_token":"r","minecraft_token":"t","minecraft_expires_at":1,"owns":true}"#,
         )
         .unwrap();
         let pass = Ok(account::Launch {
-            owner: Some((owner, secrets)),
+            owner: Some((owner.clone(), secrets.clone())),
             ..Default::default()
         });
         assert!(download_for(&pins, &dir, pass, true, &fetch, &log).is_err());
         assert!(!asked.lock().unwrap().is_empty());
+
+        // A last-known owner retained for offline Java play is not a fresh ownership
+        // confirmation and must never authorize new Mojang downloads.
+        asked.lock().unwrap().clear();
+        let offline_owner = Ok(account::Launch {
+            offline_java_owner: Some((owner, secrets)),
+            ..Default::default()
+        });
+        assert!(download_for(&pins, &dir, offline_owner, true, &fetch, &log).is_err());
+        assert!(
+            asked.lock().unwrap().is_empty(),
+            "offline Java ownership must not authorize Mojang downloads"
+        );
         let _ = fs::remove_dir_all(&dir);
 
         // A store that lacks assets is not filled for a non-owner either: nothing is asked.
