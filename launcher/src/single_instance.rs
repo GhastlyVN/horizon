@@ -11,7 +11,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The launcher-level lock file's name inside the launcher's data directory.
 const LAUNCHER_LOCK: &str = "launcher.lock";
@@ -197,6 +197,7 @@ impl Drop for SingleInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn scratch(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
