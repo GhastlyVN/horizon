@@ -235,7 +235,7 @@ jobs:
           if [[ "${{ matrix.name }}" == macos-x64 ]]; then
             versions_json="$RUNNER_TEMP/versions.json"
             versions_error="$RUNNER_TEMP/versions-error.txt"
-            no_build='import json, sys; sys.exit(3 if not any(r["available_here"] for r in json.load(sys.stdin)) else 0)'
+            no_build='import json, sys; sys.exit(3 if not any(r["available_here"] and not r["prerelease"] for r in json.load(sys.stdin)) else 0)'
             no_build_error() {
               grep -Fq "No release has a build for this platform yet." "$versions_error" ||
                 grep -Fq "No release has a build for this platform yet." "$versions_json"

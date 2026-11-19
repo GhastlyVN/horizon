@@ -236,6 +236,9 @@ class LauncherSmokeWorkflowTests(unittest.TestCase):
         self.assertIn("No release has a build for this platform yet.", smoke)
         self.assertIn("versions-error.txt", smoke)
         self.assertIn("status=0", smoke)
+        # Match backend::install_tag("latest"): prerelease assets do not qualify.
+        self.assertIn('r["available_here"] and not r["prerelease"]', smoke)
+        self.assertNotIn('any(r["available_here"] for r in json.load(sys.stdin))', smoke)
         self.assertIn("retry \"$launcher\" --json versions", smoke)
         self.assertIn('[[ $status == 3 ]]', smoke)
         self.assertIn('[[ $status == 0 ]] || exit "$status"', smoke)
