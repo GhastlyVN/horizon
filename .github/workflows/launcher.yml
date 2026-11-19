@@ -245,7 +245,7 @@ jobs:
           # (exit 3); a launcher or a script that fails still fails the step.
           if [[ "${{ matrix.name }}" == macos-x64 ]]; then
             versions=$(retry "$launcher" --json versions)
-            no_build='import json, sys; sys.exit(3 if not any(r["available_here"] for r in json.load(sys.stdin)) else 0)'
+            no_build='import json, sys; sys.exit(3 if not any(r["available_here"] and not r["prerelease"] for r in json.load(sys.stdin)) else 0)'
             status=0
             python3 -c "$no_build" <<<"$versions" || status=$?
             if [[ $status == 3 ]]; then
