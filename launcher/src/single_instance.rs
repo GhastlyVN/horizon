@@ -49,7 +49,10 @@ impl StateLock {
                     {
                         drop(file);
                         let _ = fs::remove_file(&lock_path);
-                        return Err(format!("Could not initialize lock {}: {error}", lock_path.display()));
+                        return Err(format!(
+                            "Could not initialize lock {}: {error}",
+                            lock_path.display()
+                        ));
                     }
                     return Ok(Self { lock_path });
                 }
