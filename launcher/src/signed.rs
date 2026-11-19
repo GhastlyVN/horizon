@@ -4,7 +4,7 @@
 //! with the SHA-256 pinned for it in legacy-releases.txt (a rollback). Anything else is refused
 //! with a message saying why.
 
-use crate::backend::{LAUNCHER_REPO, REPO};
+use crate::backend::{LAUNCHER_REPO, NIGHTLY_REPO, REPO};
 use horizon_release_sign::{PublicKey, SIGNATURE, SIGNATURE_V2, SUMS};
 
 /// Where a release's attached file downloads from (GitHub's fixed address for it).
@@ -52,8 +52,9 @@ pub fn launcher_digest(
     digest_from(LAUNCHER_REPO, tag, asset, keys, fetch)
 }
 
-/// The signed SHA-256 of `asset` in the Nightly published under `tag` (`nightly`, or a dated
-/// `nightly-<date>`) that installs as `version` (`nightly-<date>-<commit>`): its
+/// The signed SHA-256 of `asset` in the Nightly published under `tag` (`nightly`, `nightly-<date>`,
+/// `elyby-nightly`, or a dated `elyby-nightly-<date>-<commit>`) that installs as `version`
+/// (`nightly-<date>-<commit>`): its
 /// `SHA256SUMS.v2.sig` must sign the checksums for exactly that version, so an older Nightly
 /// can't be served as a newer one. The channel's `SHA256SUMS.sig` is for launchers from before
 /// and is not read.
@@ -64,8 +65,8 @@ pub fn nightly_digest(
     keys: &[PublicKey],
     fetch: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
 ) -> Result<String, String> {
-    let sums = fetch(&asset_url(REPO, tag, SUMS))?;
-    let signature = fetch(&asset_url(REPO, tag, SIGNATURE_V2))?
+    let sums = fetch(&asset_url(NIGHTLY_REPO, tag, SUMS))?;
+    let signature = fetch(&asset_url(NIGHTLY_REPO, tag, SIGNATURE_V2))?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     horizon_release_sign::nightly_digest(
         version,
@@ -102,8 +103,9 @@ mod tests {
         let signature = signer.sign("launcher@99.0.0", sums.as_bytes());
         let (other, _) = SigningKey::generate().unwrap();
         let served = |url: &str| -> Result<Option<Vec<u8>>, String> {
-            assert!(url
-                .starts_with("https://github.com/nguyenphuck2468-tech/horizon/releases/download/"));
+            assert!(url.starts_with(&format!(
+                "https://github.com/{LAUNCHER_REPO}/releases/download/"
+            )));
             Ok(Some(
                 if url.ends_with(".sig") {
                     signature.clone()
@@ -146,7 +148,7 @@ mod tests {
         let signature = key.sign("v2099.01.01", sums.as_bytes());
         // GitHub as it answers for a signed release (any tag: the files are what a replay would serve).
         let signed = |url: &str| -> Result<Option<Vec<u8>>, String> {
-            assert!(url.starts_with("https://github.com/horizon-rust/horizon/releases/download/"));
+            assert!(url.starts_with(&format!("https://github.com/{REPO}/releases/download/")));
             Ok(Some(
                 if url.ends_with(".sig") {
                     signature.clone()
@@ -192,6 +194,12 @@ mod tests {
             );
             let sums = sums.clone();
             move |url: &str| -> Result<Option<Vec<u8>>, String> {
+                assert!(
+                    url.starts_with(&format!("https://github.com/{REPO}/releases/download/"))
+                        || url.starts_with(&format!(
+                            "https://github.com/{NIGHTLY_REPO}/releases/download/"
+                        ))
+                );
                 Ok(Some(
                     if url.ends_with(SIGNATURE_V2) {
                         two.clone()

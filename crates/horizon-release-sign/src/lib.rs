@@ -123,10 +123,21 @@ pub fn verify(
 /// `horizon release nightly`, which no release's tag is, so a nightly's signature never passes for a
 /// release's, nor a release's for a nightly's.
 pub const NIGHTLY: &str = "nightly";
+/// This fork's isolated Nightly channel: it cannot collide with the forked copy of upstream's
+/// own Nightly publisher, which may still use the `nightly` tag.
+pub const ELYBY_NIGHTLY: &str = "elyby-nightly";
 
-/// Whether `tag` is a nightly's: `nightly`, or a past one kept as `nightly-<date>`.
+/// Whether `tag` names any Nightly channel or dated Nightly.
 pub fn is_nightly(tag: &str) -> bool {
-    tag == NIGHTLY || tag.starts_with("nightly-")
+    tag == NIGHTLY
+        || tag.starts_with("nightly-")
+        || tag == ELYBY_NIGHTLY
+        || tag.starts_with("elyby-nightly-")
+}
+
+/// Whether `tag` belongs to this fork's Ely.by-enabled Nightly channel.
+pub fn is_elyby_nightly(tag: &str) -> bool {
+    tag == ELYBY_NIGHTLY || tag.starts_with("elyby-nightly-")
 }
 
 /// The version a Nightly's GitHub title names, strictly: `Nightly 2026-10-28 · 0c02067` (as
@@ -492,6 +503,8 @@ mod tests {
         );
         assert!(nightly_digest(TONIGHT, asset, Some(sums.as_bytes()), None, &keys).is_err());
         assert!(is_nightly("nightly-2026-10-27") && !is_nightly("v0.2.81"));
+        assert!(is_elyby_nightly("elyby-nightly"));
+        assert!(is_nightly("elyby-nightly-2026-10-28-0c02067"));
     }
 
     #[test]

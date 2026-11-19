@@ -40,7 +40,7 @@
   "Prepare again": "Подготовить заново",
   "{file} is on your desktop: it plays {name}.": "{file} на рабочем столе: он запускает {name}.",
   "About": "О программе",
-  "Import": "Import",
+  "Import": "Импортировать",
   "Working": "Working",
   "Running · restarted after a crash": "Работает · перезапущен после сбоя",
   "through {wrapper}": "через {wrapper}",
@@ -94,7 +94,7 @@
   "For example nice -n 5": "Например, nice -n 5",
   "Overview": "Обзор",
   "The launcher stays open while you play.": "Лаунчер остаётся открытым, пока вы играете.",
-  "Jars: {summary}.": "Jars: {summary}.",
+  "Jars: {summary}.": "JAR-файлы: {summary}.",
   "Client": "Клиент",
   "Address on this network": "Адрес в этой сети",
   "Tailscale is installed but not running. Open it and switch it on.": "Tailscale установлен, но не запущен. Откройте и включите его.",
@@ -1098,5 +1098,8 @@
   "Sign in with Ely.by": "Войти через Ely.by",
   "Asking Ely.by…": "Запрос к Ely.by…",
   "Use the {provider} account for {name}.": "Используйте учётную запись {provider} для {name}.",
-  "The sign-in page opens in your browser. Horizon never sees your password.": "Страница входа открывается в вашем браузере. Horizon никогда не видит ваш пароль."
+  "The sign-in page opens in your browser. Horizon never sees your password.": "Страница входа открывается в вашем браузере. Horizon никогда не видит ваш пароль.",
+  "Not installed": "Not installed",
+  "Another install is running": "Another install is running",
+  "Time played": "Time played"
 }

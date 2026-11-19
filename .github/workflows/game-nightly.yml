@@ -1,97 +1,304 @@
-name: game nightly
-run-name: game nightly${{ inputs.force && ' (force)' || '' }}
-# The fork's own Nightly for Windows, the build the launcher installs as the game
-# update ([backend::REPO]). Upstream's pipeline builds every platform on self-hosted
-# runners behind the maintainer's Minecraft; this one rebuilds the Windows game from
-# this repository and takes the exporters bundle (Horizon's own compiled classes;
-# crates/horizon-prepare is unchanged from upstream, so the bundles agree) from
-# upstream's newest Nightly zip: extracted, hashed and signed with this repository's
-# key, never executed. The sources beside it (tools/, mods/, crates/horizon-prepare/)
-# come from this checkout alone (xtask's `git archive`).
+﻿name: Ely.by Nightly
+run-name: Ely.by Nightly${{ inputs.force && ' (forced)' || '' }}
+# Track upstream's moving Nightly tag. When its title changes, rebuild this fork's Windows game
+# from the exact upstream Nightly source after applying the checked Ely.by session patch.
+# The per-player Ely.by session is handed to the game by the launcher at runtime; no account
+# token is ever stored in this shared release artifact.
 #
-#   gh workflow run "game nightly"            # from the branch that ends up published
-# Manual only: no schedule on this fork.
+# Windows publishes here; Linux and macOS launchers continue to use upstream Nightlies until
+# this repository builds Ely.by-enabled game archives for those platforms.
 on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/game-nightly.yml
+      - tools/ci/apply_elyby_patch.py
+      - tools/ci/sign_release.sh
+      - crates/horizon-release-sign/**
+      - crates/horizon-client-render/**
+      - crates/horizon-client/**
+  schedule:
+    - cron: '*/10 * * * *'
+  pull_request:
+    paths:
+      - .github/workflows/game-nightly.yml
+      - tools/ci/apply_elyby_patch.py
+      - tools/ci/sign_release.sh
+      - crates/horizon-release-sign/**
+      - crates/horizon-client-render/**
   workflow_dispatch:
     inputs:
       force:
-        description: Publish even if a release for today's date exists
+        description: Rebuild and republish even when upstream's Nightly has not changed
         type: boolean
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: game-nightly
+  group: elyby-nightly-${{ github.event_name == 'pull_request' && 'check' || 'publish' }}
   cancel-in-progress: false
 
 jobs:
-  windows:
+  detect:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.detect.outputs.build }}
+      title: ${{ steps.detect.outputs.title }}
+      date: ${{ steps.detect.outputs.date }}
+      short: ${{ steps.detect.outputs.short }}
+      version: ${{ steps.detect.outputs.version }}
+      upstream_sha: ${{ steps.detect.outputs.upstream_sha }}
+    steps:
+      - id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ (inputs.force || github.event_name == 'push') && 'true' || 'false' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release=$(gh api repos/horizon-rust/horizon/releases/tags/nightly)
+          title=$(jq -r '.name // empty' <<< "$release")
+          [[ "$(jq -r '.tag_name // empty' <<< "$release")" == nightly ]] || {
+            echo "::error::Upstream did not return its moving nightly release"; exit 1;
+          }
+
+          ref=$(gh api repos/horizon-rust/horizon/git/ref/tags/nightly)
+          upstream_sha=$(jq -r '.object.sha' <<< "$ref")
+          if [[ "$(jq -r '.object.type' <<< "$ref")" == tag ]]; then
+            upstream_sha=$(gh api "repos/horizon-rust/horizon/git/tags/$upstream_sha" --jq '.object.sha')
+          fi
+
+          parsed=$(python3 - "$title" "$upstream_sha" <<'PY'
+          import re, sys
+          title, sha = sys.argv[1:]
+          # Upstream's nightly title uses a middle dot (U+00B7). Accept it literally or the
+          # mojibake form (Â·) that appears when the workflow file is interpreted with the
+          # wrong encoding, so we don't fail on encoding surprises.
+          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) [·Â·] ([0-9a-f]{7,40})", title)
+          if not match:
+              raise SystemExit(f"Unexpected upstream Nightly title: {title!r}")
+          date, short = match.groups()
+          if not sha.startswith(short):
+              raise SystemExit(f"Nightly title commit {short} does not match tag commit {sha}")
+          print(date)
+          print(short)
+          print(f"nightly-{date}-{short}")
+          PY
+          )
+          mapfile -t values <<< "$parsed"
+          date=${values[0]}
+          short=${values[1]}
+          version=${values[2]}
+
+          current=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/elyby-nightly" 2>/dev/null || printf '{}')
+          current_title=$(jq -r '.name // empty' <<< "$current")
+          complete=$(jq -r '((.assets // []) | map(.name) | index("horizon-windows-x64.zip") != null) and ((.assets // []) | map(.name) | index("SHA256SUMS") != null) and ((.assets // []) | map(.name) | index("SHA256SUMS.sig") != null) and ((.assets // []) | map(.name) | index("SHA256SUMS.v2.sig") != null)' <<< "$current")
+          build=true
+          if [[ "$FORCE" != true && "$current_title" == "$title" && "$complete" == true ]]; then
+            build=false
+          fi
+
+          {
+            echo "build=$build"
+            echo "title=$title"
+            echo "date=$date"
+            echo "short=$short"
+            echo "version=$version"
+            echo "upstream_sha=$upstream_sha"
+          } >> "$GITHUB_OUTPUT"
+          if [[ "$build" == true ]]; then
+            echo "### New upstream Nightly detected: $version" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Already mirrored: $version â€” nothing to do" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  patch-check:
+    if: github.event_name == 'pull_request'
     runs-on: windows-latest
-    timeout-minutes: 75
+    timeout-minutes: 45
+    permissions:
+      contents: read
     defaults:
       run:
         shell: bash
-    env:
-      # Where cargo puts the programs.
-      BIN: target/release
-      # Linked statically, so the game runs without the Visual C++ redistributable.
-      RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          clean: true
-      - id: stamp
-        run: |
-          echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-          echo "version=nightly-$(date -u +%F)" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: game-nightly-windows
-      # The exporters: upstream's newest Nightly zip carries them; extract the folder to
-      # the repository root, where xtask's `package` takes it.
-      - name: Exporters from upstream's newest Nightly
+          shared-key: elyby-upstream-patch-check
+      - id: version
+        name: Resolve the upstream Nightly version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag=$(gh api "repos/horizon-rust/horizon/releases?per_page=40" \
-            --jq '[.[] | select(.prerelease and (.assets | map(.name) | index("horizon-windows-x64.zip")))] | .[0].tag_name')
-          echo "upstream nightly: $tag"
+          title=$(gh api repos/horizon-rust/horizon/releases/tags/nightly --jq '.name')
+          version=$(python - "$title" <<'PY'
+          import re, sys
+          # Accept the middle dot (U+00B7) or its mojibake form (Â·).
+          match = re.fullmatch(r"Nightly (\d{4}-\d{2}-\d{2}) [·Â·] ([0-9a-f]{7,40})", sys.argv[1])
+          if not match:
+              raise SystemExit(f"Unexpected upstream Nightly title: {sys.argv[1]!r}")
+          print(f"nightly-{match.group(1)}-{match.group(2)}")
+          PY
+          )
+          ref=$(gh api repos/horizon-rust/horizon/git/ref/tags/nightly)
+          upstream_sha=$(jq -r '.object.sha' <<< "$ref")
+          if [[ "$(jq -r '.object.type' <<< "$ref")" == tag ]]; then
+            upstream_sha=$(gh api "repos/horizon-rust/horizon/git/tags/$upstream_sha" --jq '.object.sha')
+          fi
+          short=${version##*-}
+          [[ "$upstream_sha" == "$short"* ]] || { echo "::error::Nightly title and tag commit disagree"; exit 1; }
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+      - name: Download and verify the exact upstream source archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+          UPSTREAM_SHA: ${{ steps.version.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../upstream ../upstream-source
+          gh release download nightly -R horizon-rust/horizon \
+            --pattern 'horizon-source.tar.gz' \
+            --pattern 'SHA256SUMS' \
+            --pattern 'SHA256SUMS.v2.sig' \
+            --dir ../upstream
+          cargo run --locked --quiet -p horizon-release-sign -- verify \
+            --tag nightly --nightly-version "$VERSION" \
+            --only horizon-source.tar.gz ../upstream
+          tar -xzf ../upstream/horizon-source.tar.gz --strip-components=1 -C ../upstream-source
+          test -f ../upstream-source/Cargo.toml
+          git -C ../upstream-source init
+          git -C ../upstream-source config user.name "github-actions[bot]"
+          git -C ../upstream-source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C ../upstream-source add -A
+          git -C ../upstream-source -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Upstream Nightly $UPSTREAM_SHA"
+          python tools/ci/apply_elyby_patch.py ../upstream-source
+          git -C ../upstream-source add -A
+          git -C ../upstream-source -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Apply Ely.by session integration"
+      - name: Compile and test the patched Ely.by code
+        env:
+          HORIZON_VERSION: ${{ steps.version.outputs.value }}
+          HORIZON_GAME_BUILD_ID: ${{ steps.version.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
+          cd ../upstream-source
+          cargo test --locked -p horizon-client-render ely
+
+  build:
+    needs: detect
+    if: github.event_name != 'pull_request' && needs.detect.outputs.build == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      BIN: target/release
+      RUSTFLAGS: -C target-feature=+crt-static
+      HORIZON_VERSION: ${{ needs.detect.outputs.version }}
+      HORIZON_NIGHTLY: ${{ needs.detect.outputs.date }} ${{ needs.detect.outputs.short }}
+      HORIZON_GAME_BUILD_ID: ${{ needs.detect.outputs.upstream_sha }}
+      NIGHTLY_VERSION: ${{ needs.detect.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+          clean: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: elyby-game-nightly-windows
+
+      - name: Download and verify upstream Nightly source and Windows exporters
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
           mkdir -p ../upstream
-          gh release download "$tag" -R horizon-rust/horizon --pattern 'horizon-windows-x64.zip' --dir ../upstream
-          python - <<'EOF'
+          gh release download nightly -R horizon-rust/horizon \
+            --pattern 'horizon-source.tar.gz' \
+            --pattern 'horizon-windows-x64.zip' \
+            --pattern 'SHA256SUMS' \
+            --pattern 'SHA256SUMS.v2.sig' \
+            --dir ../upstream
+          cargo run --locked --quiet -p horizon-release-sign -- verify \
+            --tag nightly --nightly-version "$VERSION" \
+            --only horizon-source.tar.gz ../upstream
+          cargo run --locked --quiet -p horizon-release-sign -- verify \
+            --tag nightly --nightly-version "$VERSION" \
+            --only horizon-windows-x64.zip ../upstream
+
+      - name: Extract upstream source, apply Ely.by support, and read exporters
+        env:
+          UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
+          rm -rf ../upstream-source
+          mkdir -p ../upstream-source
+          tar -xzf ../upstream/horizon-source.tar.gz --strip-components=1 -C ../upstream-source
+          test -f ../upstream-source/Cargo.toml
+          git -C ../upstream-source init
+          git -C ../upstream-source config user.name "github-actions[bot]"
+          git -C ../upstream-source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C ../upstream-source add -A
+          git -C ../upstream-source -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Upstream Nightly $UPSTREAM_SHA"
+          python tools/ci/apply_elyby_patch.py ../upstream-source
+          git -C ../upstream-source add -A
+          git -C ../upstream-source -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Apply Ely.by session integration"
+
+          rm -rf ../upstream-source/exporters
+          python - <<'PY'
           import os, zipfile
-          folder = "../upstream"
-          zip = os.path.join(folder, [n for n in os.listdir(folder) if n.endswith(".zip")][0])
-          with zipfile.ZipFile(zip) as z:
+          archive = "../upstream/horizon-windows-x64.zip"
+          root = os.path.abspath("../upstream-source/exporters")
+          with zipfile.ZipFile(archive) as z:
               names = [n for n in z.namelist() if "/exporters/" in n]
-              assert names, "no exporters folder in upstream's zip"
-              for n in names:
-                  target = os.path.join("exporters", n.split("exporters/", 1)[1])
-                  if n.endswith("/"):
+              assert names, "no exporters folder in upstream's verified Nightly archive"
+              for name in names:
+                  relative = name.split("exporters/", 1)[1]
+                  target = os.path.abspath(os.path.join(root, relative))
+                  if os.path.commonpath([root, target]) != root:
+                      raise RuntimeError(f"unsafe exporter path: {name}")
+                  if name.endswith("/"):
                       os.makedirs(target, exist_ok=True)
                       continue
                   os.makedirs(os.path.dirname(target), exist_ok=True)
-                  with open(target, "wb") as f:
-                      f.write(z.read(n))
-                  print(target)
-          EOF
-          test -f exporters/manifest.json
-      - name: Build the client, horizon-ctl, horizon-prepare and horizon-server
-        env:
-          # Built in (horizon_core::release): --version, user agents, crash reports.
-          HORIZON_VERSION: ${{ steps.stamp.outputs.version }}
-          HORIZON_NIGHTLY: "${{ steps.stamp.outputs.date }} ${{ steps.stamp.outputs.short }}"
+                  with open(target, "wb") as output:
+                      output.write(z.read(name))
+          assert os.path.isfile(os.path.join(root, "manifest.json")), "upstream Nightly has no exporters/manifest.json"
+          PY
+
+      - name: Test the Ely.by session and skin patch
         run: |
           set -euo pipefail
+          cd ../upstream-source
+          cargo test --locked -p horizon-client-render ely
+
+      - name: Build the patched upstream game and its tools
+        run: |
+          set -euo pipefail
+          cd ../upstream-source
+          # Upstream moved the game's binary from the `horizon-client` crate to `horizon-game`
+          # (crates/horizon-game/Cargo.toml, [[bin]] name = "horizon-client"): `horizon-client`
+          # is a library now and `--bin horizon-client` against it fails to resolve.
           cargo build --release --locked \
-            -p horizon-client -p horizon-client-lib --bin horizon-client --bin horizon-ctl \
+            -p horizon-game -p horizon-client-lib --bin horizon-client --bin horizon-ctl \
             -p horizon-prepare --bin horizon-prepare -p horizon-server --bin horizon-server
           for binary in horizon-client horizon-ctl horizon-prepare horizon-server; do
             test -f "$BIN/$binary.exe" || { echo "::error::$BIN/$binary.exe is missing"; exit 1; }
@@ -102,53 +309,93 @@ jobs:
             echo "$out"
             [[ "$out" == "$binary $HORIZON_VERSION" ]] || { echo "::error::expected $binary $HORIZON_VERSION"; exit 1; }
           done
+
       - name: Only system libraries
         run: |
           set -euo pipefail
+          cd ../upstream-source
           for binary in horizon-client horizon-ctl horizon-prepare horizon-server; do
             python tools/check_imports.py "$BIN/$binary.exe"
           done
-      - name: Package
+
+      - name: Generate horizon-wasm-std.wasm
         run: |
           set -euo pipefail
+          cd ../upstream-source
+          cargo run --locked -p cargo-horizon-mod -- wasm-std target/release/horizon-wasm-std.wasm
+          test -f target/release/horizon-wasm-std.wasm || { echo "::error::horizon-wasm-std.wasm not generated"; exit 1; }
+
+      - name: Package the Windows game
+        run: |
+          set -euo pipefail
+          cd ../upstream-source
+          mkdir -p dist
           cargo run --locked -p xtask -- package "$BIN/horizon-client.exe" "dist/horizon-windows-x64"
-          7z a -tzip "horizon-windows-x64.zip" "dist/horizon-windows-x64" > /dev/null
-          if unzip -Z1 "horizon-windows-x64.zip" | grep -E '(^|/)(\._|__MACOSX/)'; then
+          # The launcher takes an archive's single top folder as the version folder and looks for
+          # horizon-client.exe right inside it (launcher/src/backend.rs, install_as). Zip from
+          # dist/ so that folder is horizon-windows-x64/: from the repository root the archive
+          # would instead hold dist/horizon-windows-x64/ and "install latest" fails with
+          # "The download has no horizon-client.exe".
+          (cd dist && 7z a -tzip horizon-windows-x64.zip horizon-windows-x64 > /dev/null)
+          entries=$(unzip -Z1 dist/horizon-windows-x64.zip)
+          if grep -E '(^|/)(\._|__MACOSX/)' <<< "$entries"; then
             echo "::error::junk in the zip"; exit 1
           fi
-      - name: Sign the checksums
+          if grep -vE '^horizon-windows-x64/' <<< "$entries"; then
+            echo "::error::the zip must hold only the horizon-windows-x64/ folder"; exit 1
+          fi
+          if ! grep -qx 'horizon-windows-x64/horizon-client.exe' <<< "$entries"; then
+            echo "::error::the zip has no horizon-windows-x64/horizon-client.exe"; exit 1
+          fi
+
+      - name: Sign both the Nightly channel and its exact version
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_KEY_NEXT: ${{ secrets.RELEASE_SIGNING_KEY_NEXT }}
+          NIGHTLY_VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          cp "horizon-windows-x64.zip" dist/
-          bash tools/ci/sign_release.sh nightly dist/horizon-windows-x64.zip
-      - name: The signature checks, as a launcher would
+          bash tools/ci/sign_release.sh elyby-nightly ../upstream-source/dist/horizon-windows-x64.zip
+
+      - name: Verify the signatures exactly as the launcher does
         run: |
           set -euo pipefail
-          cargo run --locked --quiet -p horizon-release-sign -- verify --tag nightly dist
-      - name: Publish the Nightly
+          cargo run --locked --quiet -p horizon-release-sign -- verify --tag elyby-nightly ../upstream-source/dist
+          cargo run --locked --quiet -p horizon-release-sign -- verify \
+            --tag elyby-nightly --nightly-version "$NIGHTLY_VERSION" ../upstream-source/dist
+
+      - name: Publish the dated Nightly and move the current channel tag
         env:
           GH_TOKEN: ${{ github.token }}
-          FORCE: ${{ inputs.force && 'true' || 'false' }}
+          TITLE: ${{ needs.detect.outputs.title }}
+          DATE: ${{ needs.detect.outputs.date }}
+          SHORT: ${{ needs.detect.outputs.short }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
         run: |
           set -euo pipefail
-          date=$(date -u +%F)
-          sha=$(git rev-parse HEAD)
-          short=$(git rev-parse --short=7 HEAD)
-          cat > dist/nightly-notes.md <<EOF
-          Nightly $date · $short — this fork's own game build (Windows).
-          Source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          fork_sha=$(git rev-parse HEAD)
+          dist=../upstream-source/dist
+          cat > "$dist/nightly-notes.md" <<EOF
+          $TITLE â€” Ely.by-enabled Windows build from upstream source.
+
+          Upstream Nightly: https://github.com/horizon-rust/horizon/releases/tag/nightly
+          Upstream source commit: $UPSTREAM_SHA
+          Ely.by patch commit: $fork_sha
+
+          The game receives each player's short-lived Ely.by session from Horizon Launcher at runtime.
+          No account token is included in this release.
           EOF
-          if gh release view "nightly-$date" >/dev/null 2>&1 && [[ "$FORCE" != true ]]; then
-            echo "a release for $date already exists; pass force to replace it"
-            exit 0
-          fi
-          gh release create "nightly-$date" --prerelease --latest=false --target "$sha" \
-            --title "Nightly $date · $short" --notes-file dist/nightly-notes.md \
-            dist/horizon-windows-x64.zip dist/SHA256SUMS dist/SHA256SUMS.sig
-          # The moving tag the launcher treats as the current Nightly: rebuilt at $sha.
-          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
-          gh release create nightly --prerelease --latest=false --target "$sha" \
-            --title "Nightly $date · $short" --notes-file dist/nightly-notes.md \
-            dist/horizon-windows-x64.zip dist/SHA256SUMS dist/SHA256SUMS.sig
+
+          # Replace a partial/previous attempt too: if the dated release was created but moving
+          # `nightly` was not, the next scheduled run must be able to finish publishing.
+          gh release delete "elyby-$VERSION" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "elyby-$VERSION" --prerelease --latest=false --target "$fork_sha" \
+            --title "$TITLE" --notes-file "$dist/nightly-notes.md" \
+            "$dist/horizon-windows-x64.zip" "$dist/SHA256SUMS" "$dist/SHA256SUMS.sig" "$dist/SHA256SUMS.v2.sig"
+
+          gh release delete elyby-nightly --yes --cleanup-tag 2>/dev/null || true
+          gh release create elyby-nightly --prerelease --latest=false --target "$fork_sha" \
+            --title "$TITLE" --notes-file "$dist/nightly-notes.md" \
+            "$dist/horizon-windows-x64.zip" "$dist/SHA256SUMS" "$dist/SHA256SUMS.sig" "$dist/SHA256SUMS.v2.sig"
+          echo "Published $VERSION from upstream source $UPSTREAM_SHA with Ely.by patch $fork_sha" >> "$GITHUB_STEP_SUMMARY"

@@ -555,9 +555,33 @@ const MINECRAFT_PROFILE: &str = "https://api.minecraftservices.com/minecraft/pro
 /// Single-player and integrated servers often send no `textures` property, or
 /// one without the equipped cape; the client asks the profile endpoint once.
 pub fn own_textures(session: &AuthSession) -> Option<crate::skins::Textures> {
-    // An Ely.by token is not a Minecraft Services token: never send it there.
     if session.elyby {
-        return None;
+        // Ely.by exposes a Mojang-compatible profile, keyed by nickname.
+        // Some skins-system deployments answer the raw /textures payload more
+        // reliably than the GameProfile wrapper, so use it as a fallback.
+        let name = url_encode(&session.name);
+        let profile_url = format!("http://skinsystem.ely.by/profile/{name}?unsigned=false");
+        let profile = agent()
+            .get(&profile_url)
+            .call()
+            .ok()
+            .and_then(|response| response.into_string().ok())
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
+        if let Some(profile) = profile {
+            let textures = crate::skins::ely_profile_textures(&profile);
+            if textures.skin.is_some() {
+                return Some(textures);
+            }
+        }
+
+        let textures_url = format!("http://skinsystem.ely.by/textures/{name}");
+        let response = agent().get(&textures_url).call().ok()?;
+        if response.status() != 200 {
+            return None;
+        }
+        let body = response.into_string().ok()?;
+        let payload: serde_json::Value = serde_json::from_str(&body).ok()?;
+        return Some(crate::skins::ely_textures_response(&payload));
     }
     let response = agent()
         .get(MINECRAFT_PROFILE)

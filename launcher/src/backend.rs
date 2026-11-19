@@ -9,12 +9,15 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-/// The Horizon game's releases, the mixin registry and links.json: the upstream repository
-/// publishes them, so the game and the launcher both update from it.
+/// Upstream's game releases, mixin registry and links.json. The launcher reads these game
+/// resources from upstream; its own self-updates come from [`LAUNCHER_REPO`].
 pub const REPO: &str = "horizon-rust/horizon";
-/// The launcher's own releases, published by this repo: the launcher self-updates from them
-/// ([`launcher_releases_in`]) while the game stays on [`REPO`].
-pub const LAUNCHER_REPO: &str = "nguyenphuck2468-tech/horizon";
+/// The launcher's own releases, published by this fork: the launcher self-updates from them
+/// ([`launcher_releases_in`]).
+pub const LAUNCHER_REPO: &str = "GhastlyVN/horizon";
+/// The Nightly source for this platform. Windows receives this fork's Ely.by-enabled game build;
+/// other platforms continue to use the upstream Nightly until this fork publishes their builds.
+pub const NIGHTLY_REPO: &str = if cfg!(windows) { LAUNCHER_REPO } else { REPO };
 pub const README_URL: &str = "https://github.com/horizon-rust/horizon/blob/main/launcher/README.md";
 /// The players' page on connecting an AI agent (the website's docs/agents.md).
 pub const AGENT_DOCS_URL: &str = "https://playhorizon.dev/docs/agents";
@@ -47,8 +50,9 @@ pub struct Release {
     /// Listed and installed by hand, never as an update: a GitHub pre-release of the old Alpha
     /// channel (v0.2.1 on), or a Nightly older than the current one.
     pub prerelease: bool,
-    /// A Nightly's GitHub tag (`nightly`, or `nightly-<date>` for the last week's): its files and
-    /// signature are there, while `tag` is the version it installs as (`nightly-2026-10-28-0c02067`).
+    /// A Nightly's GitHub tag (`nightly` upstream, or `elyby-nightly` on Windows; dated tags
+    /// retain their channel prefix): its files and signature are there, while `tag` is the version
+    /// it installs as (`nightly-2026-10-28-0c02067`).
     /// None for a release.
     pub nightly: Option<String>,
 }
@@ -358,12 +362,44 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     release_order(a).cmp(&release_order(b))
 }
 
-/// Every published release of the game repository ([`REPO`]), as GitHub's JSON (kept on disk with
-/// its ETag, and read through Kira's mirror past GitHub's rate limit: [`crate::github`]).
+/// Upstream's game releases, plus this fork's Ely.by-enabled Nightlies on Windows. The ordinary
+/// game releases remain upstream; only Nightly is redirected to this repository on Windows.
 fn release_list() -> Result<serde_json::Value, String> {
-    crate::github::json(&format!(
+    let upstream = crate::github::json(&format!(
         "https://api.github.com/repos/{REPO}/releases?per_page=100"
-    ))
+    ))?;
+    if cfg!(windows) {
+        let fork = crate::github::json(&format!(
+            "https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"
+        ))?;
+        Ok(merge_fork_nightlies(upstream, fork))
+    } else {
+        Ok(upstream)
+    }
+}
+
+/// Replace upstream Nightlies with this fork's Nightlies while retaining all ordinary upstream
+/// releases. The caller uses this only on Windows, where the fork publishes an Ely.by-enabled build.
+fn merge_fork_nightlies(upstream: serde_json::Value, fork: serde_json::Value) -> serde_json::Value {
+    let mut merged = match upstream {
+        serde_json::Value::Array(releases) => releases,
+        other => return other,
+    };
+    merged.retain(|release| {
+        !horizon_release_sign::is_nightly(release["tag_name"].as_str().unwrap_or_default())
+    });
+    merged.extend(
+        fork.as_array()
+            .into_iter()
+            .flatten()
+            .filter(|release| {
+                horizon_release_sign::is_elyby_nightly(
+                    release["tag_name"].as_str().unwrap_or_default(),
+                )
+            })
+            .cloned(),
+    );
+    serde_json::Value::Array(merged)
 }
 
 /// The launcher's own releases ([`LAUNCHER_REPO`]), as GitHub's JSON (kept on disk like the game's
@@ -431,7 +467,8 @@ pub fn releases() -> Result<Vec<Release>, String> {
 }
 
 /// The game's builds in `list`, newest first. A Nightly is listed under the version it installs as
-/// ([`crate::nightly::version_of`]); only the current one (`nightly`) is an update.
+/// ([`crate::nightly::version_of`]); only the current channel tag (`nightly` upstream or
+/// `elyby-nightly` on Windows) is an update.
 pub(crate) fn game_releases(list: &serde_json::Value) -> Vec<Release> {
     game_releases_with_asset(list, ASSET)
 }
@@ -444,7 +481,8 @@ fn game_releases_with_asset(list: &serde_json::Value, asset: Option<&str>) -> Ve
         if horizon_release_sign::is_nightly(&r.tag) {
             let version = crate::nightly::version_of(r);
             let tag = std::mem::replace(&mut r.tag, version);
-            r.prerelease = tag != horizon_release_sign::NIGHTLY;
+            r.prerelease =
+                tag != horizon_release_sign::NIGHTLY && tag != horizon_release_sign::ELYBY_NIGHTLY;
             r.nightly = Some(tag);
         }
     }
@@ -2767,10 +2805,9 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
         .cloned()
 }
 
-/// Load the game's release list from [`REPO`] and the launcher's own from [`LAUNCHER_REPO`], and
-/// parse both update kinds from the two responses. Publish the game releases before the launcher
-/// list is read, so a slow or failing launcher read cannot hold up the release pages or the
-/// opening animation. A list error reaches both kinds.
+/// Load upstream game releases plus this platform's Nightly source, and the launcher's own list.
+/// Publish game releases before the launcher list is read, so a slow or failing launcher read
+/// cannot hold up the release pages or the opening animation. A list error reaches both kinds.
 pub fn releases_and_updates(
     on_releases: impl FnOnce(Result<Vec<Release>, String>),
 ) -> Result<Updates, String> {
@@ -3869,16 +3906,29 @@ mod tests {
             skin: None,
             cape: None,
         };
-        let secrets = serde_json::from_str(
+        let secrets: account::Secrets = serde_json::from_str(
             r#"{"refresh_token":"r","minecraft_token":"t","minecraft_expires_at":1,"owns":true}"#,
         )
         .unwrap();
         let pass = Ok(account::Launch {
-            owner: Some((owner, secrets)),
+            owner: Some((owner.clone(), secrets.clone())),
             ..Default::default()
         });
         assert!(download_for(&pins, &dir, pass, true, &fetch, &log).is_err());
         assert!(!asked.lock().unwrap().is_empty());
+
+        // A last-known owner retained for offline Java play is not a fresh ownership
+        // confirmation and must never authorize new Mojang downloads.
+        asked.lock().unwrap().clear();
+        let offline_owner = Ok(account::Launch {
+            offline_java_owner: Some((owner, secrets)),
+            ..Default::default()
+        });
+        assert!(download_for(&pins, &dir, offline_owner, true, &fetch, &log).is_err());
+        assert!(
+            asked.lock().unwrap().is_empty(),
+            "offline Java ownership must not authorize Mojang downloads"
+        );
         let _ = fs::remove_dir_all(&dir);
 
         // A store that lacks assets is not filled for a non-owner either: nothing is asked.
@@ -4697,8 +4747,28 @@ pub fn {f}("
         ));
     }
 
-    /// The Nightly is the only build Horizon ships (docs/release-flow.md): every launcher takes the
-    /// current one as its update, over every release; the last week's are listed, never offered.
+    /// The fork's current Ely.by tag is offered as the update while older dated builds stay listed.
+    #[test]
+    fn windows_elyby_nightly_is_the_current_update_under_its_own_tag() {
+        let asset = ASSET.unwrap_or("horizon-windows-x64.zip");
+        let list = serde_json::json!([{
+            "tag_name": "elyby-nightly",
+            "name": "Nightly 2026-11-16 · abcdef0",
+            "prerelease": true,
+            "published_at": "2026-11-16T12:00:00Z",
+            "assets": [{"name": asset, "browser_download_url": "fork-build", "size": 1}]
+        }]);
+        let releases = game_releases(&list);
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].tag, "nightly-2026-11-16-abcdef0");
+        assert_eq!(releases[0].nightly.as_deref(), Some("elyby-nightly"));
+        assert!(!releases[0].prerelease);
+        assert_eq!(
+            installable_updates(&releases)[0].tag,
+            "nightly-2026-11-16-abcdef0"
+        );
+    }
+
     #[test]
     fn every_launcher_updates_to_the_current_nightly() {
         let asset = ASSET.unwrap_or("horizon-linux-x86_64.tar.gz");
