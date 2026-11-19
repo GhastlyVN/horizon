@@ -233,10 +233,11 @@ jobs:
           "$launcher" links --json
           # The Intel Mac launcher can come out before any game build has its asset (#1161): then there is nothing
           # to install yet. Only that entry skips, and only on a version list that parsed and had no build here
-          # (exit 3); a launcher or a script that fails still fails the step.
+          # (exit 3); a launcher or a script that fails still fails the step. `install latest` takes the newest
+          # non-pre-release build, so an older Nightly's Intel asset is not something it can install.
           if [[ "${{ matrix.name }}" == macos-x64 ]]; then
             versions=$(retry "$launcher" --json versions)
-            no_build='import json, sys; sys.exit(3 if not any(r["available_here"] for r in json.load(sys.stdin)) else 0)'
+            no_build='import json, sys; sys.exit(3 if not any(r["available_here"] and not r["prerelease"] for r in json.load(sys.stdin)) else 0)'
             status=0
             python3 -c "$no_build" <<<"$versions" || status=$?
             if [[ $status == 3 ]]; then
