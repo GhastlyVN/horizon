@@ -1348,7 +1348,11 @@ fn a_refused_sign_in_does_not_replay_as_an_owner_offline() {
     };
     let mut accounts = signed_in(&store, &refused);
     let pass = launch(&offline(), Some("test-client"), &store, &mut accounts).unwrap();
-    assert!(pass.owner.is_none() && pass.session.is_none());
+    assert!(
+        pass.owner.is_none()
+            && pass.session.is_none()
+            && pass.offline_java_owner.is_none()
+    );
     assert_eq!(
         java_player_with(&offline(), Some("test-client"), &store, &mut accounts).unwrap_err(),
         NoOwner.to_string()
@@ -3499,6 +3503,38 @@ fn toctou_read_count_verification() {
         "Expected exactly 1 read for the account (during validation in launch()),          got {}. A count > 1 indicates java_player_with() performed an additional          keychain read, which would be a TOCTOU vulnerability.",
         reads_for_account
     );
+}
+
+#[test]
+fn offline_java_owner_uses_the_snapshot_captured_during_the_gate() {
+    let inner = MemoryStore::default();
+    let store = MutatingSecretStore::new(inner);
+    let mut accounts = Accounts::default();
+
+    let (account, microsoft_secrets) = finish_ms_sign_in(ms_tokens());
+    accounts.add(&store, account.clone(), &microsoft_secrets).unwrap();
+    accounts.selected = Some(account.uuid.clone());
+
+    // Simulate a concurrent provider change after launch() reads the old Microsoft
+    // snapshot but before java_player_with() used to perform its second keychain read.
+    let (_, elyby_secrets) = finish_ely_sign_in(ely_tokens());
+    store.set_mutation(
+        account.uuid.clone(),
+        serde_json::to_string(&elyby_secrets).unwrap(),
+    );
+    let initial_reads = store.reads_for_uuid(&account.uuid);
+
+    let player = java_player_with(&offline(), None, &store, &mut accounts).unwrap();
+
+    assert!(store.was_mutated(), "the test must exercise the mutation");
+    assert_eq!(
+        store.reads_for_uuid(&account.uuid) - initial_reads,
+        1,
+        "the offline fallback must not re-read the keychain after the gate"
+    );
+    assert_eq!(player.uuid, account.uuid);
+    assert_eq!(player.token, microsoft_secrets.minecraft_token);
+    assert!(!player.elyby);
 }
 
 #[test]
