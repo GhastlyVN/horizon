@@ -225,5 +225,20 @@ class ElybyNightlyWorkflowTests(unittest.TestCase):
         self.assertIn("expected one upstream anchor", patch)
         compile(patch, "apply_elyby_patch.py", "exec")
 
+
+class LauncherSmokeWorkflowTests(unittest.TestCase):
+    def test_macos_x64_smoke_skips_only_the_explicit_no_build_condition(self):
+        workflow = (WORKFLOWS / "launcher.yml").read_text()
+        smoke = workflow.split("      - name: Smoke test", 1)[1].split(
+            "      - name:", 1
+        )[0]
+        self.assertIn('matrix.name == macos-x64', smoke)
+        self.assertIn("No release has a build for this platform yet.", smoke)
+        self.assertIn("versions-error.txt", smoke)
+        self.assertIn("versions_status", smoke)
+        self.assertIn("retry \"$launcher\" --json versions", smoke)
+        self.assertIn('[[ $status == 3 ]]', smoke)
+        self.assertIn('[[ $status == 0 ]] || exit "$status"', smoke)
+
 if __name__ == "__main__":
     unittest.main()
