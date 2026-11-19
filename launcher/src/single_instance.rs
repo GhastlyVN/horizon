@@ -2,16 +2,15 @@
 //! data directory, and shared state writes serialize through per-file lock files.
 //!
 //! The launcher-level lock (`launcher.lock`) makes a second launcher refuse to start while the
-//! first is alive. A lock file names the owning process id. A crash leaves the file behind; the
-//! next acquirer detects the dead owner (Linux via `/proc`, macOS/BSD via `kill(pid, 0)`,
-//! Windows via `OpenProcess`) and reclaims the lock, so there is no permanent deadlock. The owner
-//! is the only process allowed to remove its lock file.
+//! first is alive. A kernel-managed advisory file lock is authoritative; the PID in the file is
+//! diagnostic only. The kernel releases the lock when a process exits or crashes, so a persistent
+//! lock file can be safely reused without a read/check/unlink race.
 //!
 //! Shared-state writers use [`StateLock`], a cross-process mutual exclusion on a per-file lock
 //! name, for read-modify-write cycles that must not interleave.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// The launcher-level lock file's name inside the launcher's data directory.
@@ -19,115 +18,78 @@ const LAUNCHER_LOCK: &str = "launcher.lock";
 
 /// A cross-process mutual exclusion lock on a file inside a directory.
 ///
-/// The lock is a file named `name` inside `dir` holding the owning process id. Creating the file
-/// with `create_new` is atomic, so exactly one live process can hold it; when the file already
-/// exists the owner is checked through its process id and a stale lock is recycled, which keeps
-/// the lock crash-safe without permanent deadlocks.
+/// The file is persistent; the OS-level exclusive lock, not its diagnostic PID text, determines
+/// ownership. Kernel locks are released automatically when a process exits or crashes.
 pub struct StateLock {
     lock_path: PathBuf,
+    file: Option<File>,
 }
 
 impl StateLock {
     /// Try to acquire the cross-process lock `name` inside `dir`.
     ///
-    /// Fails with a clear message when another live process already holds the lock. A lock naming
-    /// a dead process is reclaimed; an unreadable owner fails closed so a partially written lock
-    /// can never be mistaken for a stale lock while its creator is still starting.
+    /// The file is opened or created, then locked by the kernel. Its PID text is written only
+    /// after the lock is held and is used for diagnostics, never to decide whether it is stale.
     pub fn acquire(dir: &Path, name: &str) -> Result<Self, String> {
         let lock_path = dir.join(name);
-        let mut attempts = 0;
-        loop {
-            attempts += 1;
-            match OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&lock_path)
-            {
-                Ok(mut file) => {
-                    if let Err(error) =
-                        writeln!(file, "{}", std::process::id()).and_then(|_| file.sync_all())
-                    {
-                        drop(file);
-                        let _ = fs::remove_file(&lock_path);
-                        return Err(format!(
-                            "Could not initialize lock {}: {error}",
-                            lock_path.display()
-                        ));
-                    }
-                    return Ok(Self { lock_path });
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // Never reclaim a lock whose owner cannot be read. A creator may have
-                    // created the file but not finished writing its PID yet; deleting it here
-                    // would let two live processes believe they own the same lock.
-                    let owner_text = match fs::read_to_string(&lock_path) {
-                        Ok(text) => text,
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                            if attempts > 10 {
-                                return Err(format!(
-                                    "Could not acquire the lock {} after retries: {e}",
-                                    lock_path.display()
-                                ));
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                            continue;
-                        }
-                        Err(error) => {
-                            return Err(format!(
-                                "Could not read lock owner at {}: {error}",
-                                lock_path.display()
-                            ));
-                        }
-                    };
-                    if !owner_text.ends_with('\n') {
-                        return Err(format!(
-                            "The lock {} exists but its owner PID is unreadable or incomplete; it was left untouched to avoid starting a second launcher.",
-                            lock_path.display()
-                        ));
-                    }
-                    let owner = owner_text.trim().parse::<u32>().map_err(|_| {
-                        format!(
-                            "The lock {} exists but its owner PID is unreadable; it was left untouched to avoid starting a second launcher.",
-                            lock_path.display()
-                        )
-                    })?;
-                    if process_alive(owner) {
-                        return Err(format!(
-                            "Another process (PID {owner}) holds the lock {}.",
-                            lock_path.display()
-                        ));
-                    }
-                    match fs::remove_file(&lock_path) {
-                        Ok(()) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => {
-                            return Err(format!(
-                                "Could not reclaim stale lock {}: {error}",
-                                lock_path.display()
-                            ));
-                        }
-                    }
-                    if attempts > 10 {
-                        return Err(format!(
-                            "Could not acquire the lock {} after retries: {e}",
-                            lock_path.display()
-                        ));
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(e) => return Err(format!("{lock_path:?}: {e}")),
-            }
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
         }
+        let mut file = options
+            .open(&lock_path)
+            .map_err(|error| format!("Could not open lock {}: {error}", lock_path.display()))?;
+
+        if let Err(error) = lock_file(&file) {
+            if lock_is_held(&error) {
+                let owner = fs::read_to_string(&lock_path)
+                    .ok()
+                    .and_then(|text| text.trim().parse::<u32>().ok());
+                return Err(match owner {
+                    Some(owner) => format!(
+                        "Another process (PID {owner}) holds the lock {}.",
+                        lock_path.display()
+                    ),
+                    None => format!(
+                        "Another process holds the lock {}; its diagnostic PID is unavailable.",
+                        lock_path.display()
+                    ),
+                });
+            }
+            return Err(format!(
+                "Could not acquire lock {}: {error}",
+                lock_path.display()
+            ));
+        }
+
+        let initialized = file
+            .set_len(0)
+            .and_then(|_| file.seek(SeekFrom::Start(0)).map(|_| ()))
+            .and_then(|_| writeln!(file, "{}", std::process::id()))
+            .and_then(|_| file.sync_all());
+        if let Err(error) = initialized {
+            unlock_file(&file);
+            return Err(format!(
+                "Could not initialize lock {}: {error}",
+                lock_path.display()
+            ));
+        }
+
+        Ok(Self {
+            lock_path,
+            file: Some(file),
+        })
     }
 
-    /// Release the lock by removing its file.
-    ///
-    /// The file is removed only when it still names this process as the owner: a lock reclaimed
-    /// by another process after a crash is never deleted by a stale owner. The check-and-remove
-    /// is best effort (another process may recreate the file between the two); an OS-level file
-    /// lock is unavailable without new dependencies.
+    /// Release the kernel lock while leaving the reusable lock file in place.
     pub(crate) fn release(&mut self) {
-        release_lock_file(&self.lock_path);
+        if let Some(file) = self.file.take() {
+            unlock_file(&file);
+            drop(file);
+        }
     }
 }
 
@@ -137,15 +99,71 @@ impl Drop for StateLock {
     }
 }
 
-/// Remove `lock_path` only when it still names this process as the owner.
-fn release_lock_file(lock_path: &Path) {
-    let ours = std::process::id().to_string();
-    let owner = fs::read_to_string(lock_path)
-        .ok()
-        .map(|text| text.trim().to_string());
-    if owner.as_deref() == Some(ours.as_str()) {
-        let _ = fs::remove_file(lock_path);
+/// Try to lock one byte without waiting. The OS releases this lock on process exit.
+#[cfg(unix)]
+fn lock_file(file: &File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
+}
+
+/// Release the Unix advisory lock. Closing the file also releases it.
+#[cfg(unix)]
+fn unlock_file(file: &File) {
+    use std::os::fd::AsRawFd;
+    let _ = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+}
+
+/// Try to lock byte zero without waiting on Windows.
+#[cfg(windows)]
+fn lock_file(file: &File) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+    };
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+
+    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    let locked = unsafe {
+        LockFileEx(
+            file.as_raw_handle(),
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            1,
+            0,
+            &mut overlapped,
+        )
+    };
+    if locked == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// Release byte zero. Closing the file also releases the Windows lock.
+#[cfg(windows)]
+fn unlock_file(file: &File) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+
+    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    let _ = unsafe { UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &mut overlapped) };
+}
+
+#[cfg(unix)]
+fn lock_is_held(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+}
+
+#[cfg(windows)]
+fn lock_is_held(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(32 | 33))
 }
 
 /// The application-level single-instance guard: at most one launcher process owns the data
@@ -255,25 +273,33 @@ mod tests {
     fn single_instance_reuses_stale_lock_from_dead_process() {
         let dir = scratch("stale");
         let lock = dir.join(LAUNCHER_LOCK);
-        fs::write(&lock, "999999999\n").unwrap(); // a PID that does not exist
-        assert!(SingleInstance::acquire(&dir).is_ok());
+        fs::write(&lock, "999999999\n").unwrap(); // stale diagnostic PID; no kernel lock is held
+        let guard = SingleInstance::acquire(&dir).unwrap();
+        assert_eq!(
+            fs::read_to_string(&lock).unwrap(),
+            format!("{}\n", std::process::id())
+        );
+        drop(guard);
     }
 
     #[test]
-    fn state_lock_refuses_unreadable_owner_without_removing_it() {
+    fn state_lock_uses_the_kernel_lock_even_when_pid_text_is_unreadable() {
         let dir = scratch("unreadable");
-        for (index, contents) in ["", "123", "not-a-pid\n"].into_iter().enumerate() {
-            let name = format!("shared-{index}.lock");
-            let lock_path = dir.join(&name);
-            fs::write(&lock_path, contents).unwrap();
+        let lock_path = dir.join("shared.lock");
+        fs::write(&lock_path, "not-a-pid\n").unwrap();
 
-            let error = match StateLock::acquire(&dir, &name) {
-                Ok(_) => panic!("an unreadable lock owner must fail closed"),
-                Err(error) => error,
-            };
-            assert!(error.contains("owner PID is unreadable"), "{error}");
-            assert_eq!(fs::read_to_string(&lock_path).unwrap(), contents);
-        }
+        let first = StateLock::acquire(&dir, "shared.lock").unwrap();
+        assert_eq!(
+            fs::read_to_string(&lock_path).unwrap(),
+            format!("{}\n", std::process::id())
+        );
+        let second = StateLock::acquire(&dir, "shared.lock");
+        assert!(second.is_err(), "a live kernel lock must exclude a second holder");
+        drop(first);
+
+        let next = StateLock::acquire(&dir, "shared.lock").unwrap();
+        drop(next);
+        assert!(lock_path.exists(), "the reusable lock file remains in place");
     }
 
     #[test]
@@ -286,23 +312,16 @@ mod tests {
     }
 
     #[test]
-    fn state_lock_release_removes_only_the_owners_file() {
+    fn state_lock_release_unlocks_without_deleting_the_reusable_file() {
         let dir = scratch("owner");
         let lock_path = dir.join("shared.lock");
-        // A lock file naming a different process survives a release call.
-        fs::write(&lock_path, "424242\n").unwrap();
-        let mut not_ours = StateLock {
-            lock_path: lock_path.clone(),
-        };
-        not_ours.release();
+        let guard = StateLock::acquire(&dir, "shared.lock").unwrap();
         assert!(lock_path.exists());
-        // This process's own lock file is removed.
-        fs::write(&lock_path, format!("{}\n", std::process::id())).unwrap();
-        let mut ours = StateLock {
-            lock_path: lock_path.clone(),
-        };
-        ours.release();
-        assert!(!lock_path.exists());
+        drop(guard);
+
+        assert!(lock_path.exists());
+        let next = StateLock::acquire(&dir, "shared.lock").unwrap();
+        drop(next);
     }
 
     /// Child half of the cross-process tests: runs when HORIZON_TEST_LOCK_DIR is set, reports
@@ -360,9 +379,9 @@ mod tests {
         let out2 = dir.join("child-2.txt");
         let ok = run_cross_process_child(&dir, &out2);
         assert_eq!(ok.trim(), "ok");
-        // The child exited without releasing (crash simulation): its stale lock file remains.
+        // The child exited without releasing (crash simulation): the kernel released its lock.
+        // The persistent file is reused by the next owner.
         assert!(dir.join("shared.lock").exists());
-        // A fresh acquisition reclaims the stale lock instead of deadlocking.
         let _ = StateLock::acquire(&dir, "shared.lock").unwrap();
     }
 
@@ -372,8 +391,7 @@ mod tests {
         let out = dir.join("child.txt");
         let ok = run_cross_process_child(&dir, &out);
         assert_eq!(ok.trim(), "ok");
-        // The child acquired the lock and exited without releasing: the file remains, naming a
-        // process that no longer exists. A fresh acquisition reclaims it.
+        // The child acquired the lock and exited without releasing: the kernel freed it.
         let _ = StateLock::acquire(&dir, "shared.lock").unwrap();
     }
 }
