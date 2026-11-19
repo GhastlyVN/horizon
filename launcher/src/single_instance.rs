@@ -79,6 +79,12 @@ impl StateLock {
                             ));
                         }
                     };
+                    if !owner_text.ends_with('\n') {
+                        return Err(format!(
+                            "The lock {} exists but its owner PID is unreadable or incomplete; it was left untouched to avoid starting a second launcher.",
+                            lock_path.display()
+                        ));
+                    }
                     let owner = owner_text.trim().parse::<u32>().map_err(|_| {
                         format!(
                             "The lock {} exists but its owner PID is unreadable; it was left untouched to avoid starting a second launcher.",
@@ -256,7 +262,7 @@ mod tests {
     #[test]
     fn state_lock_refuses_unreadable_owner_without_removing_it() {
         let dir = scratch("unreadable");
-        for (index, contents) in ["", "not-a-pid\\n"].into_iter().enumerate() {
+        for (index, contents) in ["", "123", "not-a-pid\n"].into_iter().enumerate() {
             let name = format!("shared-{index}.lock");
             let lock_path = dir.join(&name);
             fs::write(&lock_path, contents).unwrap();
