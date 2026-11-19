@@ -216,6 +216,23 @@ class ElybyNightlyWorkflowTests(unittest.TestCase):
         self.assertIn("Test the Ely.by session and skin patch", workflow)
         self.assertIn("No account token is included in this release.", workflow)
 
+    def test_fork_nightly_archive_has_the_launcher_expected_root(self):
+        workflow = (WORKFLOWS / "game-nightly.yml").read_text()
+        package = workflow.split("      - name: Package the Windows game", 1)[1].split(
+            "      - name: Sign both the Nightly channel", 1
+        )[0]
+        self.assertIn("cd dist", package)
+        self.assertIn("7z a -tzip horizon-windows-x64.zip horizon-windows-x64", package)
+        self.assertNotIn(
+            '"dist/horizon-windows-x64.zip" "dist/horizon-windows-x64"', package
+        )
+
+    def test_launcher_smoke_runs_when_game_nightly_packaging_changes(self):
+        launcher = (WORKFLOWS / "launcher.yml").read_text()
+        self.assertEqual(
+            launcher.count("- '.github/workflows/game-nightly.yml'"), 2
+        )
+
     def test_elyby_patch_fails_closed_on_unexpected_upstream_layout(self):
         root = Path(__file__).resolve().parents[1]
         patch = (root / "tools" / "ci" / "apply_elyby_patch.py").read_text()
