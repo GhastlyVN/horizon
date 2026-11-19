@@ -230,7 +230,7 @@ impl Store {
             Err(crate::persistence::LoadError::Corrupt(e)) => {
                 // Recovery: adopt the last valid backup when one exists and is valid; otherwise
                 // fall back to an empty store with a visible diagnostic.
-                let bak = path.with_extension("bak");
+                let bak = crate::persistence::backup_path(path);
                 let recovered = match crate::persistence::load_json::<Store>(&bak) {
                     Ok(store) => {
                         eprintln!("Horizon: recovered instances from {}", bak.display());

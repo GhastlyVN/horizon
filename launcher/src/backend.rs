@@ -3569,6 +3569,11 @@ impl Settings {
         // A write that stops halfway leaves settings.json unreadable, and `load` answers
         // defaults for it: the file is replaced only once it is whole.
         let dir = data_dir();
+        fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        // Concurrent writers from other launcher processes serialize on the settings lock;
+        // the guard is released when this function returns.
+        let _state_lock =
+            crate::single_instance::StateLock::acquire(&dir, "settings.json.lock")?;
         let path = dir.join("settings.json");
         let tmp = dir.join(format!("settings.{}.tmp", std::process::id()));
         let json =
