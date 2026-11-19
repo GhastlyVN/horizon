@@ -892,9 +892,9 @@ impl Audio {
         #[cfg(not(feature = "audio"))]
         let (stream, live) = {
             if output {
-                if let Err(error) = Self::open_named(mixer.clone(), target_device) {
-                    log::warn!("Horizon: no sound: {error}");
-                }
+                log::warn!(
+                    "Horizon: no sound: this build has no sound output (built without the `audio` feature)"
+                );
             }
             (None, false)
         };
