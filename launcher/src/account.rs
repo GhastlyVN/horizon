@@ -2082,10 +2082,7 @@ pub fn launch(
                 // Preserve the last confirmed owner for Java's offline path while the
                 // account-operation lock still protects this exact credential snapshot.
                 // A lock failure means another operation may be changing the keychain: fail closed.
-                if operation.is_ok()
-                    && secrets.owns_minecraft()
-                    && !secrets.sign_in_required
-                {
+                if operation.is_ok() && secrets.owns_minecraft() && !secrets.sign_in_required {
                     pass.offline_java_owner
                         .get_or_insert_with(|| (account.clone(), secrets.clone()));
                 }

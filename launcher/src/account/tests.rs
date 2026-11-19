@@ -1348,11 +1348,7 @@ fn a_refused_sign_in_does_not_replay_as_an_owner_offline() {
     };
     let mut accounts = signed_in(&store, &refused);
     let pass = launch(&offline(), Some("test-client"), &store, &mut accounts).unwrap();
-    assert!(
-        pass.owner.is_none()
-            && pass.session.is_none()
-            && pass.offline_java_owner.is_none()
-    );
+    assert!(pass.owner.is_none() && pass.session.is_none() && pass.offline_java_owner.is_none());
     assert_eq!(
         java_player_with(&offline(), Some("test-client"), &store, &mut accounts).unwrap_err(),
         NoOwner.to_string()
@@ -3512,7 +3508,9 @@ fn offline_java_owner_uses_the_snapshot_captured_during_the_gate() {
     let mut accounts = Accounts::default();
 
     let (account, microsoft_secrets) = finish_ms_sign_in(ms_tokens());
-    accounts.add(&store, account.clone(), &microsoft_secrets).unwrap();
+    accounts
+        .add(&store, account.clone(), &microsoft_secrets)
+        .unwrap();
     accounts.selected = Some(account.uuid.clone());
 
     // Simulate a concurrent provider change after launch() reads the old Microsoft
