@@ -77,9 +77,7 @@ impl StateLock {
             ));
         }
 
-        Ok(Self {
-            file: Some(file),
-        })
+        Ok(Self { file: Some(file) })
     }
 
     /// Release the kernel lock while leaving the reusable lock file in place.
@@ -258,12 +256,18 @@ mod tests {
             format!("{}\n", std::process::id())
         );
         let second = StateLock::acquire(&dir, "shared.lock");
-        assert!(second.is_err(), "a live kernel lock must exclude a second holder");
+        assert!(
+            second.is_err(),
+            "a live kernel lock must exclude a second holder"
+        );
         drop(first);
 
         let next = StateLock::acquire(&dir, "shared.lock").unwrap();
         drop(next);
-        assert!(lock_path.exists(), "the reusable lock file remains in place");
+        assert!(
+            lock_path.exists(),
+            "the reusable lock file remains in place"
+        );
     }
 
     #[test]
