@@ -232,10 +232,10 @@ class LauncherSmokeWorkflowTests(unittest.TestCase):
         smoke = workflow.split("      - name: Smoke test", 1)[1].split(
             "      - name:", 1
         )[0]
-        self.assertIn('matrix.name == macos-x64', smoke)
+        self.assertIn('\"${{ matrix.name }}\" == macos-x64', smoke)
         self.assertIn("No release has a build for this platform yet.", smoke)
         self.assertIn("versions-error.txt", smoke)
-        self.assertIn("versions_status", smoke)
+        self.assertIn("status=0", smoke)
         self.assertIn("retry \"$launcher\" --json versions", smoke)
         self.assertIn('[[ $status == 3 ]]', smoke)
         self.assertIn('[[ $status == 0 ]] || exit "$status"', smoke)
