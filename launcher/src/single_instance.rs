@@ -21,7 +21,6 @@ const LAUNCHER_LOCK: &str = "launcher.lock";
 /// The file is persistent; the OS-level exclusive lock, not its diagnostic PID text, determines
 /// ownership. Kernel locks are released automatically when a process exits or crashes.
 pub struct StateLock {
-    lock_path: PathBuf,
     file: Option<File>,
 }
 
@@ -79,7 +78,6 @@ impl StateLock {
         }
 
         Ok(Self {
-            lock_path,
             file: Some(file),
         })
     }
@@ -196,40 +194,6 @@ impl Drop for SingleInstance {
         // Release the single-instance lock.
         self.inner.release();
     }
-}
-
-/// Whether a process with `pid` is still alive.
-#[cfg(target_os = "linux")]
-fn process_alive(pid: u32) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
-}
-
-/// Whether a process with `pid` is still alive, asking the kernel through `kill(pid, 0)`:
-/// signal 0 performs error checking without sending a signal.
-#[cfg(all(unix, not(target_os = "linux")))]
-fn process_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-}
-
-/// Whether a process with `pid` is still alive: open the process with query limited
-/// information and keep the handle only for the check. Access denied means the process exists
-/// but cannot be opened, which still answers the question.
-#[cfg(windows)]
-fn process_alive(pid: u32) -> bool {
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn OpenProcess(desired: u32, inherit: i32, process_id: u32) -> *mut core::ffi::c_void;
-        fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
-        fn GetLastError() -> u32;
-    }
-    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
-    const ERROR_ACCESS_DENIED: u32 = 5;
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if handle.is_null() {
-        return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
-    }
-    unsafe { CloseHandle(handle) };
-    true
 }
 
 #[cfg(test)]
