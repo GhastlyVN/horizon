@@ -2,11 +2,10 @@
 //! data directory, and shared state writes serialize through per-file lock files.
 //!
 //! The launcher-level lock (`launcher.lock`) makes a second launcher refuse to start while the
-//! first is alive; a stale lock left by a crashed process is detected through the owning process
-//! id and reused, so there is no permanent deadlock.
-//!
-//! Shared-state writers use [`StateLock`], a cross-process mutual exclusion on a per-file lock
-//! name, for read-modify-write cycles that must not interleave.
+//! first is alive. A lock file names the owning process id. A crash leaves the file behind; the
+//! next acquirer detects the dead owner (Linux via `/proc`, macOS/BSD via `kill(pid, 0)`,
+//! Windows via `OpenProcess`) and reclaims the lock, so there is no permanent deadlock. The owner
+//! is the only process allowed to remove its lock file.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -28,7 +27,9 @@ pub struct StateLock {
 impl StateLock {
     /// Try to acquire the cross-process lock `name` inside `dir`.
     ///
-    /// Fails with a clear message when another live process already holds the lock.
+    /// Fails with a clear message when another live process already holds the lock. When the
+    /// lock file names a dead process (a crash) or an unreadable owner, the lock is reclaimed;
+    /// every acquisition is exclusive, so a reclaimed lock is never shared.
     pub fn acquire(dir: &Path, name: &str) -> Result<Self, String> {
         let lock_path = dir.join(name);
         let mut attempts = 0;
@@ -46,7 +47,9 @@ impl StateLock {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     // A lock file exists. If its owner is still alive, we are a duplicate.
-                    // If the owner crashed, clean up and retry.
+                    // If the owner crashed (or the file is unreadable), reclaim the lock. The
+                    // removal races with other acquirers at worst, which the retry loop
+                    // absorbs; `create_new` keeps every claim atomic.
                     let owner = fs::read_to_string(&lock_path)
                         .ok()
                         .and_then(|t| t.trim().parse::<u32>().ok());
@@ -73,16 +76,31 @@ impl StateLock {
         }
     }
 
-    /// Release the lock by removing its file. A crash leaves the file, but the next holder
-    /// detects the dead owner and reuses it.
+    /// Release the lock by removing its file.
+    ///
+    /// The file is removed only when it still names this process as the owner: a lock reclaimed
+    /// by another process after a crash is never deleted by a stale owner. The check-and-remove
+    /// is best effort (another process may recreate the file between the two); an OS-level file
+    /// lock is unavailable without new dependencies.
     pub(crate) fn release(&mut self) {
-        let _ = fs::remove_file(&self.lock_path);
+        release_lock_file(&self.lock_path);
     }
 }
 
 impl Drop for StateLock {
     fn drop(&mut self) {
         self.release();
+    }
+}
+
+/// Remove `lock_path` only when it still names this process as the owner.
+fn release_lock_file(lock_path: &Path) {
+    let ours = std::process::id().to_string();
+    let owner = fs::read_to_string(lock_path)
+        .ok()
+        .map(|text| text.trim().to_string());
+    if owner.as_deref() == Some(ours.as_str()) {
+        let _ = fs::remove_file(lock_path);
     }
 }
 
@@ -111,20 +129,36 @@ impl Drop for SingleInstance {
 }
 
 /// Whether a process with `pid` is still alive.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn process_alive(pid: u32) -> bool {
-    if cfg!(target_os = "linux") {
-        std::path::Path::new(&format!("/proc/{pid}")).exists()
-    } else {
-        // macOS and the BSDs have no /proc: ask the kernel through kill(pid, 0).
-        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-    }
+    Path::new(&format!("/proc/{pid}")).exists()
 }
 
-#[cfg(not(unix))]
-fn process_alive(_pid: u32) -> bool {
-    // Windows has no portable liveness probe without platform APIs; treat an existing lock as
-    // held so a second instance is refused, and clear the lock file after a crash manually.
+/// Whether a process with `pid` is still alive, asking the kernel through `kill(pid, 0)`:
+/// signal 0 performs error checking without sending a signal.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn process_alive(pid: u32) -> bool {
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+/// Whether a process with `pid` is still alive: open the process with query limited
+/// information and keep the handle only for the check. Access denied means the process exists
+/// but cannot be opened, which still answers the question.
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(desired: u32, inherit: i32, process_id: u32) -> *mut core::ffi::c_void;
+        fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+        fn GetLastError() -> u32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const ERROR_ACCESS_DENIED: u32 = 5;
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
+    }
+    unsafe { CloseHandle(handle) };
     true
 }
 
@@ -166,5 +200,97 @@ mod tests {
         assert!(StateLock::acquire(&dir, "shared.lock").is_err());
         drop(first);
         assert!(StateLock::acquire(&dir, "shared.lock").is_ok());
+    }
+
+    #[test]
+    fn state_lock_release_removes_only_the_owners_file() {
+        let dir = scratch("owner");
+        let lock_path = dir.join("shared.lock");
+        // A lock file naming a different process survives a release call.
+        fs::write(&lock_path, "424242\n").unwrap();
+        let mut not_ours = StateLock {
+            lock_path: lock_path.clone(),
+        };
+        not_ours.release();
+        assert!(lock_path.exists());
+        // This process's own lock file is removed.
+        fs::write(&lock_path, format!("{}\n", std::process::id())).unwrap();
+        let mut ours = StateLock {
+            lock_path: lock_path.clone(),
+        };
+        ours.release();
+        assert!(!lock_path.exists());
+    }
+
+    /// Child half of the cross-process tests: runs when HORIZON_TEST_LOCK_DIR is set, reports
+    /// the outcome through HORIZON_TEST_OUTCOME, and exits without dropping its guard, so the
+    /// parent can observe a crash.
+    #[test]
+    fn state_lock_cross_process_child() {
+        let Some(dir) = std::env::var_os("HORIZON_TEST_LOCK_DIR") else {
+            return; // not a child invocation: pass trivially
+        };
+        let Some(out) = std::env::var_os("HORIZON_TEST_OUTCOME") else {
+            return;
+        };
+        let dir = PathBuf::from(dir);
+        match StateLock::acquire(&dir, "shared.lock") {
+            Ok(guard) => {
+                let _ = fs::write(&out, "ok");
+                // Deliberately do not drop the guard: simulate a crash.
+                std::mem::forget(guard);
+            }
+            Err(error) => {
+                let _ = fs::write(&out, format!("held:{error}"));
+            }
+        }
+        std::process::exit(0);
+    }
+
+    fn run_cross_process_child(dir: &Path, out: &Path) -> String {
+        let exe = std::env::current_exe().unwrap();
+        let status = std::process::Command::new(exe)
+            .args([
+                "single_instance::tests::state_lock_cross_process_child",
+                "--exact",
+                "--nocapture",
+            ])
+            .env("HORIZON_TEST_LOCK_DIR", dir)
+            .env("HORIZON_TEST_OUTCOME", out)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        fs::read_to_string(out).unwrap()
+    }
+
+    #[test]
+    fn state_lock_excludes_another_process_then_releases() {
+        let dir = scratch("xproc");
+        let guard = StateLock::acquire(&dir, "shared.lock").unwrap();
+        let out1 = dir.join("child-1.txt");
+        let held = run_cross_process_child(&dir, &out1);
+        assert!(
+            held.trim().starts_with("held:"),
+            "a live owner must refuse a second process: {held}"
+        );
+        drop(guard);
+        let out2 = dir.join("child-2.txt");
+        let ok = run_cross_process_child(&dir, &out2);
+        assert_eq!(ok.trim(), "ok");
+        // The child exited without releasing (crash simulation): its stale lock file remains.
+        assert!(dir.join("shared.lock").exists());
+        // A fresh acquisition reclaims the stale lock instead of deadlocking.
+        let _ = StateLock::acquire(&dir, "shared.lock").unwrap();
+    }
+
+    #[test]
+    fn state_lock_recovers_after_owner_crash() {
+        let dir = scratch("crash");
+        let out = dir.join("child.txt");
+        let ok = run_cross_process_child(&dir, &out);
+        assert_eq!(ok.trim(), "ok");
+        // The child acquired the lock and exited without releasing: the file remains, naming a
+        // process that no longer exists. A fresh acquisition reclaims it.
+        let _ = StateLock::acquire(&dir, "shared.lock").unwrap();
     }
 }
