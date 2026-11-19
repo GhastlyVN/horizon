@@ -229,20 +229,42 @@ jobs:
           retry() { for i in 1 2 3 4; do "$@" && return 0; sleep $((i * 15)); done; return 1; }
           retry "$launcher" versions
           "$launcher" links --json
-          # The Intel Mac launcher can come out before any game build has its asset (#1161): then there is nothing
-          # to install yet. Only that entry skips, and only on a version list that parsed and had no build here
-          # (exit 3); a launcher or a script that fails still fails the step.
+          # The Intel Mac launcher can precede a game build asset. The CLI reports that
+          # condition as an error before it can emit JSON, so handle that exact response as well
+          # as a parsed version list with no local build. Other errors still fail after retry.
           if [[ "${{ matrix.name }}" == macos-x64 ]]; then
-            versions=$(retry "$launcher" --json versions)
+            versions_json="$RUNNER_TEMP/versions.json"
+            versions_error="$RUNNER_TEMP/versions-error.txt"
             no_build='import json, sys; sys.exit(3 if not any(r["available_here"] for r in json.load(sys.stdin)) else 0)'
+            no_build_error() {
+              grep -Fq "No release has a build for this platform yet." "$versions_error" ||
+                grep -Fq "No release has a build for this platform yet." "$versions_json"
+            }
             status=0
-            python3 -c "$no_build" <<<"$versions" || status=$?
+            if ! "$launcher" --json versions >"$versions_json" 2>"$versions_error"; then
+              if no_build_error; then
+                status=3
+              else
+                cat "$versions_error" "$versions_json"
+                if ! retry "$launcher" --json versions >"$versions_json" 2>"$versions_error"; then
+                  if no_build_error; then
+                    status=3
+                  else
+                    cat "$versions_error" "$versions_json"
+                    exit 1
+                  fi
+                fi
+              fi
+            fi
+            if [[ $status == 0 ]]; then
+              python3 -c "$no_build" <"$versions_json" || status=$?
+            fi
             if [[ $status == 3 ]]; then
               echo "::warning::No game build has an asset for ${{ matrix.name }} yet: install not tested"
               rm -rf "$HORIZON_LAUNCHER_HOME"
               exit 0
             fi
-            [[ $status == 0 ]] || exit $status
+            [[ $status == 0 ]] || exit "$status"
           fi
           retry "$launcher" install latest
           "$launcher" versions --installed
