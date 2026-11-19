@@ -126,8 +126,12 @@ pub fn is_readable<T: DeserializeOwned>(path: &Path) -> bool {
 /// The backup file name of a state file: the file's name with `.bak` appended
 /// (`accounts.json` -> `accounts.json.bak`), so messages, tests and recovery paths agree.
 pub fn backup_path(path: &Path) -> PathBuf {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("state");
-    path.with_file_name(format!("{name}.bak"))
+    let mut name = path
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("state"))
+        .to_os_string();
+    name.push(".bak");
+    path.with_file_name(name)
 }
 
 /// A monotonically increasing counter for unique temporary file names inside one process.
@@ -320,6 +324,20 @@ mod tests {
         // The backup holds a valid earlier state.
         let backup = load_json::<Thing>(&backup_path(&dir.join("state.json"))).unwrap();
         assert!(backup.name.starts_with("writer-"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_path_preserves_non_utf8_filename_bytes() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let filename = std::ffi::OsString::from_vec(vec![b's', b't', b'a', b't', b'e', 0xff]);
+        let path = PathBuf::from(filename);
+        let backup = backup_path(&path);
+        assert_eq!(
+            backup.file_name().unwrap().as_bytes(),
+            &[b's', b't', b'a', b't', b'e', 0xff, b'.', b'b', b'a', b'k']
+        );
     }
 
     #[test]
