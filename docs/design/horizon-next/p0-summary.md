@@ -98,3 +98,20 @@ The single failure in both runs is the pre-existing environment-sensitive
 - Step 4 ? CI quality gates (add `--bins --tests` to the launcher PR fence; platform split).
 - Step 5 ? networking retry/timeout unification (502/503/504, backoff+jitter, budgets, cancellation).
 - Step 6 ? process lifecycle, typed errors, launcher log, diagnostics.
+
+### 8.4.7 Status correction (2026-11-19): PRs #9 and #10 were merged by the repo owner
+
+- PR #9 (data integrity) merged 2026-11-09T15:34:53Z (head 874d14578a, base 2d26cdbcfe).
+- PR #10 (process safety) merged 2026-11-09T15:35:10Z (head e379b14823, base 2d26cdbcfe).
+- The repo owner also pushed follow-up commits on launcher: e2cb6a97cd (GitHub 504 retry, from
+  PR #8), 0abfd0e27c (create data directory before instance lock), 51981b5992 (Windows build for
+  source changes), 696470aa8a (format data directory error).
+- launcher now contains the merged Phase 0 Step 2 (data integrity) and Step 3 (process safety).
+- The remaining review closures were carried into follow-up PR #51 (phase-0/review-closures,
+  from launcher @ 696470aa8a): owner-checked lock release, Windows stale-lock reclaim via
+  kernel32 OpenProcess, StateLock wired into Settings::save, cross-process tests, and the .bak
+  name unified to accounts.json.bak / instances.json.bak via persistence::backup_path.
+  Verification of PR #51 is delegated to PR CI (codespace billing-blocked, HTTP 402; the local
+  machine has no Rust toolchain).
+- PR #51 does not touch main or PR #1. Merging PR #51 remains the owner's decision; Step 4
+  (CI quality gates) starts only after the remaining review items are accepted.
