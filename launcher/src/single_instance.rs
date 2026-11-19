@@ -30,9 +30,9 @@ pub struct StateLock {
 impl StateLock {
     /// Try to acquire the cross-process lock `name` inside `dir`.
     ///
-    /// Fails with a clear message when another live process already holds the lock. When the
-    /// lock file names a dead process (a crash) or an unreadable owner, the lock is reclaimed;
-    /// every acquisition is exclusive, so a reclaimed lock is never shared.
+    /// Fails with a clear message when another live process already holds the lock. A lock naming
+    /// a dead process is reclaimed; an unreadable owner fails closed so a partially written lock
+    /// can never be mistaken for a stale lock while its creator is still starting.
     pub fn acquire(dir: &Path, name: &str) -> Result<Self, String> {
         let lock_path = dir.join(name);
         let mut attempts = 0;
@@ -44,28 +44,60 @@ impl StateLock {
                 .open(&lock_path)
             {
                 Ok(mut file) => {
-                    let _ = writeln!(file, "{}", std::process::id());
-                    let _ = file.sync_all();
+                    if let Err(error) =
+                        writeln!(file, "{}", std::process::id()).and_then(|_| file.sync_all())
+                    {
+                        drop(file);
+                        let _ = fs::remove_file(&lock_path);
+                        return Err(format!("Could not initialize lock {}: {error}", lock_path.display()));
+                    }
                     return Ok(Self { lock_path });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // A lock file exists. If its owner is still alive, we are a duplicate.
-                    // If the owner crashed (or the file is unreadable), reclaim the lock. The
-                    // removal races with other acquirers at worst, which the retry loop
-                    // absorbs; `create_new` keeps every claim atomic.
-                    let owner = fs::read_to_string(&lock_path)
-                        .ok()
-                        .and_then(|t| t.trim().parse::<u32>().ok());
-                    if owner.is_some_and(process_alive) {
-                        let shown = owner
-                            .map(|pid| pid.to_string())
-                            .unwrap_or_else(|| "unknown".into());
+                    // Never reclaim a lock whose owner cannot be read. A creator may have
+                    // created the file but not finished writing its PID yet; deleting it here
+                    // would let two live processes believe they own the same lock.
+                    let owner_text = match fs::read_to_string(&lock_path) {
+                        Ok(text) => text,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            if attempts > 10 {
+                                return Err(format!(
+                                    "Could not acquire the lock {} after retries: {e}",
+                                    lock_path.display()
+                                ));
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            continue;
+                        }
+                        Err(error) => {
+                            return Err(format!(
+                                "Could not read lock owner at {}: {error}",
+                                lock_path.display()
+                            ));
+                        }
+                    };
+                    let owner = owner_text.trim().parse::<u32>().map_err(|_| {
+                        format!(
+                            "The lock {} exists but its owner PID is unreadable; it was left untouched to avoid starting a second launcher.",
+                            lock_path.display()
+                        )
+                    })?;
+                    if process_alive(owner) {
                         return Err(format!(
-                            "Another process (PID {shown}) holds the lock {}.",
+                            "Another process (PID {owner}) holds the lock {}.",
                             lock_path.display()
                         ));
                     }
-                    let _ = fs::remove_file(&lock_path);
+                    match fs::remove_file(&lock_path) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            return Err(format!(
+                                "Could not reclaim stale lock {}: {error}",
+                                lock_path.display()
+                            ));
+                        }
+                    }
                     if attempts > 10 {
                         return Err(format!(
                             "Could not acquire the lock {} after retries: {e}",
@@ -216,6 +248,23 @@ mod tests {
         let lock = dir.join(LAUNCHER_LOCK);
         fs::write(&lock, "999999999\n").unwrap(); // a PID that does not exist
         assert!(SingleInstance::acquire(&dir).is_ok());
+    }
+
+    #[test]
+    fn state_lock_refuses_unreadable_owner_without_removing_it() {
+        let dir = scratch("unreadable");
+        for (index, contents) in ["", "not-a-pid\\n"].into_iter().enumerate() {
+            let name = format!("shared-{index}.lock");
+            let lock_path = dir.join(&name);
+            fs::write(&lock_path, contents).unwrap();
+
+            let error = match StateLock::acquire(&dir, &name) {
+                Ok(_) => panic!("an unreadable lock owner must fail closed"),
+                Err(error) => error,
+            };
+            assert!(error.contains("owner PID is unreadable"), "{error}");
+            assert_eq!(fs::read_to_string(&lock_path).unwrap(), contents);
+        }
     }
 
     #[test]
