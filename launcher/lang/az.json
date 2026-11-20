@@ -1132,5 +1132,6 @@
   "The legacy workflow remains available during migration; this preview does not pretend that this panel is functional yet.": "The legacy workflow remains available during migration; this preview does not pretend that this panel is functional yet.",
   "This workspace is being migrated.": "This workspace is being migrated.",
   "Use generated game name": "Use generated game name",
-  "seconds played": "seconds played"
+  "seconds played": "seconds played",
+  "Couldn't load releases.": "Couldn't load releases."
 }
