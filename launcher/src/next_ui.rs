@@ -1542,13 +1542,10 @@ mod tests {
             let translated_description = translations
                 .get(description_key)
                 .and_then(serde_json::Value::as_str)
-                .unwrap_or_else(|| panic!("missing Vietnamese route description: {description_key}"));
-            assert_ne!(
-                translated_description,
-                description_key,
-                "untranslated route description: {description_key}"
-            );
+                .unwrap_or_else(|| {
+                    panic!("missing Vietnamese route description: {description_key}")
+                });
+            assert_ne!(translated_description, description_key, "untranslated route description: {description_key}");
         }
     }
-
 }
