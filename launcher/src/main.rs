@@ -54,6 +54,7 @@ mod mods_project;
 mod motion;
 mod multiplayer_page;
 mod native_log_page;
+mod next_ui;
 mod new_instance;
 mod owner_page;
 mod packs_page;
@@ -206,6 +207,8 @@ const LOG_LINES: usize = 2000;
 struct Launcher {
     theme: Theme,
     page: Page,
+    /// Route selected in the replacement frontend preview; independent of legacy Page.
+    next_route: horizon_launcher::next_navigation::Route,
     /// How many times the page changed, for the page transition.
     switches: usize,
     content_scroll: Scrollbar,
@@ -554,6 +557,7 @@ impl Launcher {
             theme: Theme::for_appearance(settings.appearance, settings.accent, window.appearance())
                 .with_glass(settings.glass_tint(), settings.glass_blur()),
             page: Page::from_env(),
+            next_route: horizon_launcher::next_navigation::Route::Home,
             switches: 0,
             content_scroll: Scrollbar::default(),
             settings_pane: gpui::ScrollHandle::new(),
@@ -5163,6 +5167,10 @@ impl Render for Launcher {
         self.proxy_focused = self.proxy_focus.is_focused(window);
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);
+        // Keep the migration preview opt-in until feature parity is complete.
+        if next_ui::wanted() {
+            return div().child(next_ui::render(self, cx));
+        }
         let content = match self.page {
             Page::Play => self.play_page(cx),
             Page::Versions => self.versions_page(cx),
