@@ -171,6 +171,45 @@ fn every_language_has_every_string_the_code_asks_for() {
 }
 
 #[test]
+fn vietnamese_next_ui_preview_copy_is_reviewed() {
+    let table: HashMap<String, String> =
+        serde_json::from_str(Language::Vietnamese.source()).unwrap();
+    let expected = [
+        ("Accounts", "Tài khoản"),
+        ("Ely.by", "Ely.by"),
+        ("Installed builds", "Bản dựng đã cài đặt"),
+        ("Installing · {percent}%", "Đang cài đặt · {percent}%"),
+        ("Manage game profiles, versions, Java and per-instance configuration.", "Quản lý hồ sơ trò chơi, phiên bản, Java và cấu hình riêng cho từng bản cài đặt."),
+        ("NEXT-GENERATION LAUNCHER", "TRÌNH KHỞI CHẠY THẾ HỆ MỚI"),
+        ("No account selected", "Chưa chọn tài khoản"),
+        ("No build selected", "Chưa chọn bản dựng"),
+        ("No instance selected", "Chưa chọn bản cài đặt"),
+        ("No screenshots yet.", "Chưa có ảnh chụp màn hình."),
+        ("Preview · feature migration in progress", "Bản xem trước · đang chuyển đổi tính năng"),
+        ("Provider unavailable", "Nhà cung cấp không khả dụng"),
+        ("SELECTED INSTANCE", "BẢN CÀI ĐẶT ĐANG CHỌN"),
+        ("Select account", "Chọn tài khoản"),
+        ("Selected", "Đã chọn"),
+        ("Session", "Phiên đăng nhập"),
+        ("The legacy workflow remains available during migration; this preview does not pretend that this panel is functional yet.", "Quy trình cũ vẫn khả dụng trong quá trình chuyển đổi; bản xem trước này chưa phải là bảng điều khiển hoạt động đầy đủ."),
+        ("This workspace is being migrated.", "Không gian làm việc này đang được chuyển đổi."),
+        ("Use generated game name", "Dùng tên trò chơi được tạo tự động"),
+        ("seconds played", "giây đã chơi"),
+    ];
+    for (english, vietnamese) in expected {
+        assert_eq!(
+            table.get(english).map(String::as_str),
+            Some(vietnamese),
+            "Vietnamese preview: {english:?}"
+        );
+        assert_eq!(
+            holes(english),
+            holes(vietnamese),
+            "Vietnamese placeholders: {english:?}"
+        );
+    }
+}
+#[test]
 fn the_system_language_is_the_first_one_the_launcher_has() {
     assert_eq!(Language::pick(["pl-PL", "en-US"]), Language::Polish);
     assert_eq!(Language::pick(["ja-JP", "en-US"]), Language::Japanese);
