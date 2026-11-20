@@ -1132,6 +1132,5 @@
   "The legacy workflow remains available during migration; this preview does not pretend that this panel is functional yet.": "Quy trình cũ vẫn khả dụng trong quá trình chuyển đổi; bản xem trước này chưa phải là bảng điều khiển hoạt động đầy đủ.",
   "This workspace is being migrated.": "Không gian làm việc này đang được chuyển đổi.",
   "Use generated game name": "Dùng tên trò chơi được tạo tự động",
-  "seconds played": "giây đã chơi",
-  "Couldn't load releases.": "Couldn't load releases."
+  "seconds played": "giây đã chơi"
 }
