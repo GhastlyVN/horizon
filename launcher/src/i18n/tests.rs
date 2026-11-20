@@ -172,7 +172,8 @@ fn every_language_has_every_string_the_code_asks_for() {
 
 #[test]
 fn vietnamese_next_ui_preview_copy_is_reviewed() {
-    let table: HashMap<String, String> = serde_json::from_str(Language::Vietnamese.source()).unwrap();
+    let table: HashMap<String, String> =
+        serde_json::from_str(Language::Vietnamese.source()).unwrap();
     let expected = [
         ("Accounts", "Tài khoản"),
         ("Ely.by", "Ely.by"),
@@ -196,8 +197,16 @@ fn vietnamese_next_ui_preview_copy_is_reviewed() {
         ("seconds played", "giây đã chơi"),
     ];
     for (english, vietnamese) in expected {
-        assert_eq!(table.get(english).map(String::as_str), Some(vietnamese), "Vietnamese preview: {english:?}");
-        assert_eq!(holes(english), holes(vietnamese), "Vietnamese placeholders: {english:?}");
+        assert_eq!(
+            table.get(english).map(String::as_str),
+            Some(vietnamese),
+            "Vietnamese preview: {english:?}"
+        );
+        assert_eq!(
+            holes(english),
+            holes(vietnamese),
+            "Vietnamese placeholders: {english:?}"
+        );
     }
 }
 #[test]
