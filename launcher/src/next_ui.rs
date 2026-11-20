@@ -1527,16 +1527,18 @@ mod tests {
     fn vietnamese_shell_navigation_labels_and_descriptions_are_translated() {
         use horizon_launcher::next_navigation::ROUTES;
 
-        let translations: serde_json::Value =
-            serde_json::from_str(include_str!("../lang/vi.json"))
-                .expect("Vietnamese translations are valid JSON");
+        let translations: serde_json::Value = serde_json::from_str(include_str!("../lang/vi.json"))
+            .expect("Vietnamese translations are valid JSON");
         for route in ROUTES {
             let label_key = label(route.route);
             let translated_label = translations
                 .get(label_key)
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_else(|| panic!("missing Vietnamese navigation label: {label_key}"));
-            assert_ne!(translated_label, label_key, "untranslated label: {label_key}");
+            assert_ne!(
+                translated_label, label_key,
+                "untranslated label: {label_key}"
+            );
 
             let description_key = description(route.route);
             let translated_description = translations
@@ -1545,7 +1547,10 @@ mod tests {
                 .unwrap_or_else(|| {
                     panic!("missing Vietnamese route description: {description_key}")
                 });
-            assert_ne!(translated_description, description_key, "untranslated route description: {description_key}");
+            assert_ne!(
+                translated_description, description_key,
+                "untranslated route description: {description_key}"
+            );
         }
     }
 }
