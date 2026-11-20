@@ -1437,8 +1437,8 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
 #[cfg(test)]
 mod tests {
     use super::{
-        content_only_route, home_quick_actions, layout_metrics, navigation_activation_key,
-        preview_enabled,
+        content_only_route, description, home_quick_actions, label, layout_metrics,
+        navigation_activation_key, preview_enabled,
     };
 
     #[test]
@@ -1522,4 +1522,33 @@ mod tests {
             assert!(!preview_enabled(value));
         }
     }
+
+    #[test]
+    fn vietnamese_shell_navigation_labels_and_descriptions_are_translated() {
+        use horizon_launcher::next_navigation::ROUTES;
+
+        let translations: serde_json::Value =
+            serde_json::from_str(include_str!("../lang/vi.json"))
+                .expect("Vietnamese translations are valid JSON");
+        for route in ROUTES {
+            let label_key = label(route.route);
+            let translated_label = translations
+                .get(label_key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_else(|| panic!("missing Vietnamese navigation label: {label_key}"));
+            assert_ne!(translated_label, label_key, "untranslated label: {label_key}");
+
+            let description_key = description(route.route);
+            let translated_description = translations
+                .get(description_key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_else(|| panic!("missing Vietnamese route description: {description_key}"));
+            assert_ne!(
+                translated_description,
+                description_key,
+                "untranslated route description: {description_key}"
+            );
+        }
+    }
+
 }
