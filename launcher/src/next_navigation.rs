@@ -10,7 +10,6 @@ pub enum Workspace {
     Instances,
     Accounts,
     Content,
-    ModDevelopment,
     Servers,
     Multiplayer,
     Worlds,
@@ -32,7 +31,6 @@ pub enum Route {
     ContentBrowser,
     InstalledContent,
     ModpackManager,
-    ModWorkshop,
     ServerDashboard,
     ServerConsole,
     MultiplayerBrowser,
@@ -122,13 +120,6 @@ pub const ROUTES: &[RouteMetadata] = &[
         workspace: Workspace::Content,
         title_key: "nav.modpacks",
         id: "content.modpacks",
-        canonical: true,
-    },
-    RouteMetadata {
-        route: Route::ModWorkshop,
-        workspace: Workspace::ModDevelopment,
-        title_key: "nav.mod_workshop",
-        id: "content.mod_workshop",
         canonical: true,
     },
     RouteMetadata {
@@ -280,7 +271,7 @@ mod tests {
             );
             assert!(!entry.title_key.is_empty());
         }
-        assert_eq!(routes.len(), 21);
+        assert_eq!(routes.len(), 20);
     }
 
     #[test]
@@ -290,7 +281,6 @@ mod tests {
             Workspace::Instances,
             Workspace::Accounts,
             Workspace::Content,
-            Workspace::ModDevelopment,
             Workspace::Servers,
             Workspace::Multiplayer,
             Workspace::Worlds,
@@ -318,11 +308,6 @@ mod tests {
             route_by_id("content.modpacks").unwrap().workspace,
             Workspace::Content
         );
-        assert_eq!(
-            route_by_id("content.mod_workshop").unwrap().route,
-            Route::ModWorkshop
-        );
-        assert_eq!(workspace_for(Route::ModWorkshop), Workspace::ModDevelopment);
         assert!(route_by_id("not-a-route").is_none());
         assert_eq!(workspace_for(Route::DownloadQueue), Workspace::Diagnostics);
     }

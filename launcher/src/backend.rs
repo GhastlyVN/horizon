@@ -470,11 +470,7 @@ pub fn releases() -> Result<Vec<Release>, String> {
 /// ([`crate::nightly::version_of`]); only the current channel tag (`nightly` upstream or
 /// `elyby-nightly` on Windows) is an update.
 pub(crate) fn game_releases(list: &serde_json::Value) -> Vec<Release> {
-    game_releases_with_asset(list, ASSET)
-}
-
-fn game_releases_with_asset(list: &serde_json::Value, asset: Option<&str>) -> Vec<Release> {
-    let mut out = parse_releases(list, asset, |tag| {
+    let mut out = parse_releases(list, ASSET, |tag| {
         is_game_tag(tag) || horizon_release_sign::is_nightly(tag)
     });
     for r in &mut out {
@@ -503,15 +499,7 @@ fn launcher_releases_in_with(
     list: &serde_json::Value,
     json: impl Fn(String) -> Result<serde_json::Value, String>,
 ) -> Vec<Release> {
-    launcher_releases_in_with_asset(list, launcher_asset(), json)
-}
-
-fn launcher_releases_in_with_asset(
-    list: &serde_json::Value,
-    asset: Option<&str>,
-    json: impl Fn(String) -> Result<serde_json::Value, String>,
-) -> Vec<Release> {
-    let found = parse_releases(list, asset, is_launcher_tag);
+    let found = parse_releases(list, launcher_asset(), is_launcher_tag);
     if found.iter().any(|r| r.asset.is_some()) {
         return found;
     }
@@ -527,7 +515,11 @@ fn launcher_releases_in_with_asset(
     }
     for tag in tags.into_iter().take(3) {
         if let Ok(release) = json(format!("{api}/releases/tags/{tag}")) {
-            let one = parse_releases(&serde_json::json!([release]), asset, is_launcher_tag);
+            let one = parse_releases(
+                &serde_json::json!([release]),
+                launcher_asset(),
+                is_launcher_tag,
+            );
             if one.iter().any(|r| r.asset.is_some()) {
                 return one;
             }
@@ -660,6 +652,22 @@ fn portable_data_dir(executable: &Path) -> Option<PathBuf> {
         .join("portable")
         .is_file()
         .then(|| parent.join("Horizon-Data"))
+}
+
+/// Whether this process is running from a portable bundle with its adjacent marker file.
+pub fn is_portable_install() -> bool {
+    // Explicit path overrides make the effective data tree user-defined; do not guess that
+    // the adjacent portable folder is the active destination in that case.
+    if std::env::var_os("HORIZON_LAUNCHER_HOME").is_some()
+        || std::env::var_os("HORIZON_HOME").is_some()
+    {
+        return false;
+    }
+    std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(portable_data_dir)
+        .is_some()
 }
 
 /// The launcher's data folder; `HORIZON_LAUNCHER_HOME` overrides it (for tests and scripts).
@@ -3321,6 +3329,10 @@ pub enum Msg {
     Updates(Result<Box<Updates>, String>),
     LauncherProgress(f32),
     LauncherUpdated(Result<(), String>),
+    /// A preview of the files an explicit portable migration would copy.
+    MigrationPreview(Result<crate::migration::Preview, String>),
+    /// The result of copying missing files into a portable data folder.
+    MigrationDone(Result<crate::migration::ResultSummary, String>),
     /// `reuse_prepared_everywhere` prepared these versions.
     Reused(Vec<(String, String)>),
     /// None when secrets are kept in the OS keychain, else what to say: they last only until
@@ -4650,12 +4662,12 @@ pub fn {f}("
     fn the_fallback_looks_for_0_2_launchers_first() {
         // The asset the launcher reading this list installs with (the AppImage's own when it runs
         // from one), as launcher_releases_in_with looks for it.
-        let asset = "horizon-launcher-test-asset.tar.gz";
+        let asset = launcher_asset().unwrap_or("unsupported");
         let release = |tag: &str| serde_json::json!({"tag_name": tag, "assets": [{"name": asset, "browser_download_url": "u", "size": 1}]});
         let asked = std::cell::RefCell::new(Vec::new());
         let lookup = |with_new: bool| {
             asked.borrow_mut().clear();
-            launcher_releases_in_with_asset(&serde_json::json!([]), Some(asset), |url| {
+            launcher_releases_in_with(&serde_json::json!([]), |url| {
                 asked
                     .borrow_mut()
                     .push(url.rsplit('/').next().unwrap_or("").to_string());
@@ -4783,7 +4795,7 @@ pub fn {f}("
             {"tag_name": "nightly-2026-10-27", "name": "Nightly 2026-10-27 · 7954902", "prerelease": true,
              "published_at": "2026-10-28T00:15:40Z", "assets": build("e")},
         ]);
-        let releases = game_releases_with_asset(&list, Some(asset));
+        let releases = game_releases(&list);
         let listed: Vec<_> = releases
             .iter()
             .map(|r| (r.tag.as_str(), r.nightly.as_deref(), r.prerelease))
@@ -5262,16 +5274,8 @@ pub fn {f}("
             || vec![empty.clone(), store.clone()],
             &log,
         );
-        // Another concurrent prepare can legitimately make this copy wait. That log line
-        // is not part of the asset-store result; the byte-for-byte assertions below are.
-        let actual = lines
-            .borrow()
-            .iter()
-            .filter(|line| !line.starts_with("Waiting for another horizon-prepare to finish with "))
-            .cloned()
-            .collect::<Vec<_>>();
         assert_eq!(
-            actual,
+            *lines.borrow(),
             [
                 "Built-in pack assets ready: 2 files, 0.0 MB",
                 "Panorama assets ready: 7 files, 0.0 MB",
@@ -5279,7 +5283,6 @@ pub fn {f}("
                 "Language assets ready: 2 files, 0.0 MB",
                 "Sound assets ready: 1 files, 0.0 MB",
             ]
-            .map(str::to_string)
         );
         for (name, data) in &assets {
             assert_eq!(asset("v0.2.1", name).as_ref(), Some(data), "{name}");
