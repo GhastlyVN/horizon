@@ -1436,7 +1436,10 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
 
 #[cfg(test)]
 mod tests {
-    use super::{content_only_route, layout_metrics, navigation_activation_key, preview_enabled};
+    use super::{
+        content_only_route, home_quick_actions, layout_metrics, navigation_activation_key,
+        preview_enabled,
+    };
 
     #[test]
     fn shell_layout_scales_for_compact_and_standard_windows() {
