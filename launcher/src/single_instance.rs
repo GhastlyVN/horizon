@@ -16,6 +16,12 @@ use std::path::Path;
 /// The launcher-level lock file's name inside the launcher's data directory.
 const LAUNCHER_LOCK: &str = "launcher.lock";
 
+/// Where the Windows byte-range lock sits. Windows file locks are mandatory: another handle
+/// cannot read the locked bytes, so the lock stays clear of the diagnostic PID text at the
+/// start of the file and a second process can still read it for the error message.
+#[cfg(windows)]
+const LOCK_REGION_OFFSET: u64 = 1 << 20;
+
 /// A cross-process mutual exclusion lock on a file inside a directory.
 ///
 /// The file is persistent; the OS-level exclusive lock, not its diagnostic PID text, determines
@@ -114,7 +120,7 @@ fn unlock_file(file: &File) {
     let _ = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
 }
 
-/// Try to lock byte zero without waiting on Windows.
+/// Try to lock the sentinel byte without waiting on Windows.
 #[cfg(windows)]
 fn lock_file(file: &File) -> std::io::Result<()> {
     use std::os::windows::io::AsRawHandle;
@@ -124,6 +130,11 @@ fn lock_file(file: &File) -> std::io::Result<()> {
     use windows_sys::Win32::System::IO::OVERLAPPED;
 
     let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    // windows-sys exposes the byte range as a union member: set it through the named structure.
+    unsafe {
+        overlapped.Anonymous.Anonymous.Offset = LOCK_REGION_OFFSET as u32;
+        overlapped.Anonymous.Anonymous.OffsetHigh = (LOCK_REGION_OFFSET >> 32) as u32;
+    }
     let locked = unsafe {
         LockFileEx(
             file.as_raw_handle(),
@@ -141,7 +152,7 @@ fn lock_file(file: &File) -> std::io::Result<()> {
     }
 }
 
-/// Release byte zero. Closing the file also releases the Windows lock.
+/// Release the sentinel byte. Closing the file also releases the Windows lock.
 #[cfg(windows)]
 fn unlock_file(file: &File) {
     use std::os::windows::io::AsRawHandle;
@@ -149,6 +160,11 @@ fn unlock_file(file: &File) {
     use windows_sys::Win32::System::IO::OVERLAPPED;
 
     let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    // windows-sys exposes the byte range as a union member: set it through the named structure.
+    unsafe {
+        overlapped.Anonymous.Anonymous.Offset = LOCK_REGION_OFFSET as u32;
+        overlapped.Anonymous.Anonymous.OffsetHigh = (LOCK_REGION_OFFSET >> 32) as u32;
+    }
     let _ = unsafe { UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &mut overlapped) };
 }
 
