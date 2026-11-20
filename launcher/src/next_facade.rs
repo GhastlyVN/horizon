@@ -361,7 +361,14 @@ pub mod native_mods {
         profile: Profile,
         progress: impl Fn(Step),
     ) -> Result<String, String> {
-        crate::native_mods::build(base, folder, instance, allow_revision_mismatch, profile, progress)
+        crate::native_mods::build(
+            base,
+            folder,
+            instance,
+            allow_revision_mismatch,
+            profile,
+            progress,
+        )
     }
 
     pub fn build_server(
@@ -372,7 +379,14 @@ pub mod native_mods {
         profile: Profile,
         progress: impl Fn(Step),
     ) -> Result<PathBuf, String> {
-        crate::native_mods::build_server(base, folder, output, allow_revision_mismatch, profile, progress)
+        crate::native_mods::build_server(
+            base,
+            folder,
+            output,
+            allow_revision_mismatch,
+            profile,
+            progress,
+        )
     }
 }
 /// Hosted servers and their sharing.
