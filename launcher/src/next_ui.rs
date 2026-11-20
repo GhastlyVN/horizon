@@ -91,6 +91,23 @@ fn content_only_route(route: horizon_launcher::next_navigation::Route) -> bool {
     matches!(route, Route::ContentBrowser | Route::InstalledContent)
 }
 
+/// Only routes without a migrated workspace should show the migration placeholder.
+fn shows_migration_placeholder(route: horizon_launcher::next_navigation::Route) -> bool {
+    use horizon_launcher::next_navigation::Route;
+    matches!(
+        route,
+        Route::ServerDashboard
+            | Route::ServerConsole
+            | Route::MultiplayerBrowser
+            | Route::Wardrobe
+            | Route::DiagnosticsOverview
+            | Route::DownloadQueue
+            | Route::CrashReports
+            | Route::GlobalSettings
+            | Route::InstanceSettings
+    )
+}
+
 fn home_quick_actions() -> [(horizon_launcher::next_navigation::Route, &'static str); 4] {
     use horizon_launcher::next_navigation::Route;
     [
@@ -1369,14 +1386,7 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
         .when(active == Route::ModWorkshop, |page| {
             page.child(native_workshop_page.expect("native workshop route has its own workflow"))
         })
-        .when(
-            !content_route
-                && active != Route::Home
-                && active != Route::ModWorkshop
-                && active != Route::InstanceDetails
-                && active != Route::WorldLibrary
-                && active != Route::ScreenshotLibrary,
-            |page| {
+        .when(shows_migration_placeholder(active), |page| {
             page.child(
                 div()
                     .flex()
@@ -1438,7 +1448,7 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
 mod tests {
     use super::{
         content_only_route, description, home_quick_actions, label, layout_metrics,
-        navigation_activation_key, preview_enabled,
+        navigation_activation_key, preview_enabled, shows_migration_placeholder,
     };
 
     #[test]
@@ -1488,6 +1498,48 @@ mod tests {
         assert!(content_only_route(Route::InstalledContent));
         assert!(!content_only_route(Route::ModpackManager));
         assert!(!content_only_route(Route::ModWorkshop));
+    }
+
+    #[test]
+    fn migration_placeholder_is_limited_to_unported_workspaces() {
+        use horizon_launcher::next_navigation::Route;
+
+        for route in [
+            Route::Home,
+            Route::InstanceLibrary,
+            Route::InstanceDetails,
+            Route::VersionManager,
+            Route::AccountCenter,
+            Route::AccountDetails,
+            Route::ContentBrowser,
+            Route::InstalledContent,
+            Route::ModpackManager,
+            Route::ModWorkshop,
+            Route::WorldLibrary,
+            Route::ScreenshotLibrary,
+        ] {
+            assert!(
+                !shows_migration_placeholder(route),
+                "implemented route unexpectedly shows a migration placeholder: {route:?}"
+            );
+        }
+
+        for route in [
+            Route::ServerDashboard,
+            Route::ServerConsole,
+            Route::MultiplayerBrowser,
+            Route::Wardrobe,
+            Route::DiagnosticsOverview,
+            Route::DownloadQueue,
+            Route::CrashReports,
+            Route::GlobalSettings,
+            Route::InstanceSettings,
+        ] {
+            assert!(
+                shows_migration_placeholder(route),
+                "unported route is missing its migration placeholder: {route:?}"
+            );
+        }
     }
 
     #[test]
