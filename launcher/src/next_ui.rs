@@ -91,6 +91,16 @@ fn content_only_route(route: horizon_launcher::next_navigation::Route) -> bool {
     matches!(route, Route::ContentBrowser | Route::InstalledContent)
 }
 
+fn home_quick_actions() -> [(horizon_launcher::next_navigation::Route, &'static str); 4] {
+    use horizon_launcher::next_navigation::Route;
+    [
+        (Route::InstanceLibrary, "Instances"),
+        (Route::VersionManager, "Versions"),
+        (Route::ContentBrowser, "Content"),
+        (Route::AccountCenter, "Accounts"),
+    ]
+}
+
 fn configure_content_route(this: &mut Launcher, route: horizon_launcher::next_navigation::Route) {
     if let Some(kind) = content_kind(route) {
         this.mods_set_content_route(kind, content_only_route(route));
@@ -832,23 +842,41 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
                             )),
                     )
                     .child(
-                        div()
-                            .id("next-home-play")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(180.))
-                            .px(px(18.))
-                            .py(px(12.))
-                            .rounded(px(9.))
-                            .bg(t.accent)
-                            .text_color(t.page)
-                            .cursor_pointer()
-                            .child(tr(if game_running { "Game starting / running" } else { "Play" }))
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.play();
-                                cx.notify();
-                            })),
+                        keyboard(
+                            div()
+                                .id("next-home-play")
+                                .role(gpui::Role::Button)
+                                .aria_label(tr(if game_running {
+                                    "Game starting / running"
+                                } else {
+                                    "Play"
+                                }))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .w(px(180.))
+                                .px(px(18.))
+                                .py(px(12.))
+                                .rounded(px(9.))
+                                .bg(t.accent)
+                                .text_color(t.page)
+                                .cursor_pointer()
+                                .child(tr(if game_running { "Game starting / running" } else { "Play" }))
+                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    this.play();
+                                    cx.notify();
+                                }))
+                                .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                                    KEYBOARD.store(true, Ordering::Relaxed);
+                                    if !navigation_activation_key(&event.keystroke.key) {
+                                        return;
+                                    }
+                                    this.play();
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                })),
+                            &t,
+                        ),
                     )
                     .child(
                         div()
@@ -895,29 +923,40 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
                         div()
                             .flex()
                             .gap(px(8.))
-                            .children([
-                                (Route::InstanceLibrary, "Instances"),
-                                (Route::VersionManager, "Versions"),
-                                (Route::ContentBrowser, "Content"),
-                                (Route::AccountCenter, "Accounts"),
-                            ].into_iter().map(|(route, title)| {
-                                div()
-                                    .id(SharedString::from(format!("next-home-quick-{title}")))
-                                    .flex()
-                                    .flex_1()
-                                    .justify_center()
-                                    .px(px(12.))
-                                    .py(px(10.))
-                                    .rounded(px(8.))
-                                    .bg(t.plate)
-                                    .text_size(px(12.))
-                                    .text_color(t.ink)
-                                    .cursor_pointer()
-                                    .child(tr(title))
-                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                        select_route(this, route);
-                                        cx.notify();
-                                    }))
+                            .children(home_quick_actions().into_iter().map(|(route, title)| {
+                                let selected = active == route;
+                                keyboard(
+                                    div()
+                                        .id(SharedString::from(format!("next-home-quick-{title}")))
+                                        .role(gpui::Role::Button)
+                                        .aria_label(tr(title))
+                                        .aria_selected(selected)
+                                        .flex()
+                                        .flex_1()
+                                        .justify_center()
+                                        .px(px(12.))
+                                        .py(px(10.))
+                                        .rounded(px(8.))
+                                        .bg(t.plate)
+                                        .text_size(px(12.))
+                                        .text_color(t.ink)
+                                        .cursor_pointer()
+                                        .child(tr(title))
+                                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                            select_route(this, route);
+                                            cx.notify();
+                                        }))
+                                        .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                                            KEYBOARD.store(true, Ordering::Relaxed);
+                                            if !navigation_activation_key(&event.keystroke.key) {
+                                                return;
+                                            }
+                                            select_route(this, route);
+                                            cx.stop_propagation();
+                                            cx.notify();
+                                        })),
+                                    &t,
+                                )
                             })),
                     ),
             )
@@ -1446,6 +1485,21 @@ mod tests {
         assert!(content_only_route(Route::InstalledContent));
         assert!(!content_only_route(Route::ModpackManager));
         assert!(!content_only_route(Route::ModWorkshop));
+    }
+
+    #[test]
+    fn home_quick_actions_target_the_existing_workspaces() {
+        use horizon_launcher::next_navigation::Route;
+
+        assert_eq!(
+            home_quick_actions(),
+            [
+                (Route::InstanceLibrary, "Instances"),
+                (Route::VersionManager, "Versions"),
+                (Route::ContentBrowser, "Content"),
+                (Route::AccountCenter, "Accounts"),
+            ]
+        );
     }
 
     #[test]
