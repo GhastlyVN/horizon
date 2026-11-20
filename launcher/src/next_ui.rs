@@ -1056,7 +1056,7 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
                         .rounded(px(9.))
                         .bg(t.plate_soft)
                         .text_color(t.danger)
-                        .child(format!("{}: {error}", tr("Couldn't load releases."))),
+                        .child(trf("Couldn't load releases. {error}", &[("error", error)])),
                 );
             } else if versions_loading {
                 versions = versions.child(
