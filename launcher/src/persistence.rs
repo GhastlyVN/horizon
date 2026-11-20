@@ -53,7 +53,7 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
     // Back up the previous valid state, if any, so a crash or corrupt write can be recovered.
     if path.exists() {
-        let bak = path.with_extension("bak");
+        let bak = backup_path(path);
         let _ = fs::copy(path, &bak);
     }
 
@@ -123,6 +123,17 @@ pub fn is_readable<T: DeserializeOwned>(path: &Path) -> bool {
     load_json::<T>(path).is_ok()
 }
 
+/// The backup file name of a state file: the file's name with `.bak` appended
+/// (`accounts.json` -> `accounts.json.bak`), so messages, tests and recovery paths agree.
+pub fn backup_path(path: &Path) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("state"))
+        .to_os_string();
+    name.push(".bak");
+    path.with_file_name(name)
+}
+
 /// A monotonically increasing counter for unique temporary file names inside one process.
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -179,7 +190,7 @@ mod tests {
         let path = dir.join("state.json");
         fs::write(&path, "old").unwrap();
         atomic_write_bytes(&path, b"new").unwrap();
-        assert!(path.with_extension("bak").exists());
+        assert!(backup_path(&path).exists());
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
     }
 
@@ -265,6 +276,75 @@ mod tests {
         assert!(
             content.starts_with("writer-"),
             "unexpected content: {content}"
+        );
+    }
+
+    /// Child half of the cross-process atomic-write test, run with the test binary itself.
+    #[test]
+    fn persistence_child_writer() {
+        let Some(dir) = std::env::var_os("HORIZON_TEST_CHILD_DIR") else {
+            return; // not a child invocation: pass trivially
+        };
+        let Some(id) = std::env::var("HORIZON_TEST_CHILD_ID").ok() else {
+            return;
+        };
+        let dir = PathBuf::from(dir);
+        let id: u32 = id.parse().unwrap();
+        let state = Thing {
+            name: format!("writer-{id}"),
+            value: id,
+        };
+        atomic_write_json(&dir.join("state.json"), &state).unwrap();
+    }
+
+    #[test]
+    fn atomic_write_bytes_survives_concurrent_processes() {
+        let dir = scratch("xproc");
+        let exe = std::env::current_exe().unwrap();
+        let children: Vec<_> = (0..4)
+            .map(|i| {
+                std::process::Command::new(&exe)
+                    .args([
+                        "persistence::tests::persistence_child_writer",
+                        "--exact",
+                        "--nocapture",
+                    ])
+                    .env("HORIZON_TEST_CHILD_DIR", &dir)
+                    .env("HORIZON_TEST_CHILD_ID", i.to_string())
+                    .status()
+                    .unwrap()
+            })
+            .collect();
+        for status in &children {
+            assert!(status.success());
+        }
+        // Every write landed atomically: state.json parses and holds one writer's payload.
+        let state = load_json::<Thing>(&dir.join("state.json")).unwrap();
+        assert!(state.name.starts_with("writer-"));
+        // The backup holds a valid earlier state.
+        let backup = load_json::<Thing>(&backup_path(&dir.join("state.json"))).unwrap();
+        assert!(backup.name.starts_with("writer-"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_path_preserves_non_utf8_filename_bytes() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let filename = std::ffi::OsString::from_vec(vec![b's', b't', b'a', b't', b'e', 0xff]);
+        let path = PathBuf::from(filename);
+        let backup = backup_path(&path);
+        assert_eq!(
+            backup.file_name().unwrap().as_bytes(),
+            &[b's', b't', b'a', b't', b'e', 0xff, b'.', b'b', b'a', b'k']
+        );
+    }
+
+    #[test]
+    fn backup_path_appends_bak_after_extension() {
+        assert_eq!(
+            backup_path(Path::new("accounts.json")),
+            PathBuf::from("accounts.json.bak")
         );
     }
 

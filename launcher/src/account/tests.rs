@@ -3804,7 +3804,7 @@ fn accounts_atomic_save_keeps_bak_of_previous() {
     std::fs::write(&path, r#"{"accounts":[],"selected":null}"#).unwrap();
     let acc = Accounts::default();
     Accounts::save_to(&acc, &path).unwrap();
-    assert!(path.with_extension("bak").exists());
+    assert!(crate::persistence::backup_path(&path).exists());
     assert!(path.exists());
     let loaded = Accounts::load_from(&path);
     assert!(loaded.accounts.is_empty());
@@ -3831,7 +3831,7 @@ fn accounts_recover_from_bak_when_main_is_corrupt() {
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("accounts.json");
     std::fs::write(&path, "{not valid json").unwrap();
-    let bak = path.with_extension("bak");
+    let bak = crate::persistence::backup_path(&path);
     std::fs::write(&bak, r#"{"accounts":[],"selected":null}"#).unwrap();
     let acc = Accounts::load_from(&path);
     assert!(acc.accounts.is_empty());

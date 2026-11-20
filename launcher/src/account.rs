@@ -1755,7 +1755,7 @@ impl Accounts {
             Err(crate::persistence::LoadError::Corrupt(e)) => {
                 // Recovery: adopt the last valid backup when one exists and is valid; otherwise
                 // fall back to an empty account set with a visible diagnostic.
-                let bak = path.with_extension("bak");
+                let bak = crate::persistence::backup_path(path);
                 let recovered = match crate::persistence::load_json::<Self>(&bak) {
                     Ok(acc) => {
                         eprintln!("Horizon: recovered accounts from {}", bak.display());

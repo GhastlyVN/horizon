@@ -555,7 +555,7 @@ fn instances_atomic_save_keeps_bak_of_previous() {
     std::fs::write(&path, "{}").unwrap();
     let store = Store::default();
     Store::save(&store, &root).unwrap();
-    assert!(path.with_extension("bak").exists());
+    assert!(crate::persistence::backup_path(&path).exists());
     assert!(path.exists());
     let loaded = Store::load(&root);
     assert!(loaded.instances.is_empty());
@@ -583,7 +583,7 @@ fn instances_recover_from_bak_when_main_is_corrupt() {
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("instances.json");
     std::fs::write(&path, "{not valid json").unwrap();
-    let bak = path.with_extension("bak");
+    let bak = crate::persistence::backup_path(&path);
     std::fs::write(&bak, "{}").unwrap();
     let store = Store::load(&root);
     assert!(store.instances.is_empty());
