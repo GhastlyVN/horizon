@@ -123,11 +123,9 @@ fn a_symlink_at_the_kept_name_is_not_overwritten() {
     let victim = root.join("settings.json");
     std::fs::write(&victim, b"keep me").unwrap();
     std::os::unix::fs::symlink(&victim, dir.join(&name)).unwrap();
-    assert!(
-        keep_background(&dir, &picture)
-            .unwrap_err()
-            .contains("symlink")
-    );
+    assert!(keep_background(&dir, &picture)
+        .unwrap_err()
+        .contains("symlink"));
     assert_eq!(std::fs::read(&victim).unwrap(), b"keep me");
     std::fs::remove_dir_all(&root).unwrap();
 }
