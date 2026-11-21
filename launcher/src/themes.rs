@@ -283,7 +283,40 @@ pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let hash = crate::sources::sha1_hex(&bytes);
     let name = format!("background-{}.{ext}", &hash[..12]);
-    std::fs::write(dir.join(&name), &bytes).map_err(|e| format!("{name}: {e}"))?;
+    let kept = dir.join(&name);
+    let mut kept_file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&kept)
+    {
+        Ok(file) => Some(file),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let meta = std::fs::symlink_metadata(&kept).map_err(|e| format!("{name}: {e}"))?;
+            if !meta.file_type().is_file() {
+                return Err(format!("{name}: a symlink or folder is already there"));
+            }
+            let existing = std::fs::read(&kept).map_err(|e| format!("{name}: {e}"))?;
+            if existing != bytes {
+                return Err(format!(
+                    "{name}: an existing background has different content"
+                ));
+            }
+            None
+        }
+        Err(error) => return Err(format!("{name}: {error}")),
+    };
+    if let Some(mut output) = kept_file.take() {
+        if let Err(error) = std::io::Write::write_all(&mut output, &bytes) {
+            drop(output);
+            let _ = std::fs::remove_file(&kept);
+            return Err(format!("{name}: {error}"));
+        }
+        if let Err(error) = output.sync_all() {
+            drop(output);
+            let _ = std::fs::remove_file(&kept);
+            return Err(format!("{name}: {error}"));
+        }
+    }
     for old in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let other = old.file_name().to_string_lossy().into_owned();
         if other.starts_with("background-") && other != name {
