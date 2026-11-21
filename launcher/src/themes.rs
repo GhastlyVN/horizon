@@ -297,7 +297,9 @@ pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
             }
             let existing = std::fs::read(&kept).map_err(|e| format!("{name}: {e}"))?;
             if existing != bytes {
-                return Err(format!("{name}: an existing background has different content"));
+                return Err(format!(
+                    "{name}: an existing background has different content"
+                ));
             }
             None
         }

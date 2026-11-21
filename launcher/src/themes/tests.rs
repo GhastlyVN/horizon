@@ -110,7 +110,10 @@ fn a_background_is_a_picture_kept_once() {
 
 #[test]
 fn an_existing_background_with_different_bytes_is_not_overwritten() {
-    let root = std::env::temp_dir().join(format!("horizon-background-existing-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "horizon-background-existing-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&root);
     let dir = root.join("data");
     std::fs::create_dir_all(&dir).unwrap();
