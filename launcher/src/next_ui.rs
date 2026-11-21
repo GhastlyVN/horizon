@@ -91,6 +91,23 @@ fn content_only_route(route: horizon_launcher::next_navigation::Route) -> bool {
     matches!(route, Route::ContentBrowser | Route::InstalledContent)
 }
 
+/// Only routes without a migrated workspace should show the migration placeholder.
+fn shows_migration_placeholder(route: horizon_launcher::next_navigation::Route) -> bool {
+    use horizon_launcher::next_navigation::Route;
+    matches!(
+        route,
+        Route::ServerDashboard
+            | Route::ServerConsole
+            | Route::MultiplayerBrowser
+            | Route::Wardrobe
+            | Route::DiagnosticsOverview
+            | Route::DownloadQueue
+            | Route::CrashReports
+            | Route::GlobalSettings
+            | Route::InstanceSettings
+    )
+}
+
 fn home_quick_actions() -> [(horizon_launcher::next_navigation::Route, &'static str); 4] {
     use horizon_launcher::next_navigation::Route;
     [
@@ -1369,14 +1386,7 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
         .when(active == Route::ModWorkshop, |page| {
             page.child(native_workshop_page.expect("native workshop route has its own workflow"))
         })
-        .when(
-            !content_route
-                && active != Route::Home
-                && active != Route::ModWorkshop
-                && active != Route::InstanceDetails
-                && active != Route::WorldLibrary
-                && active != Route::ScreenshotLibrary,
-            |page| {
+        .when(shows_migration_placeholder(active), |page| {
             page.child(
                 div()
                     .flex()
@@ -1437,8 +1447,8 @@ pub(super) fn render(this: &mut Launcher, cx: &mut Context<Launcher>) -> impl In
 #[cfg(test)]
 mod tests {
     use super::{
-        content_only_route, home_quick_actions, layout_metrics, navigation_activation_key,
-        preview_enabled,
+        content_only_route, description, home_quick_actions, label, layout_metrics,
+        navigation_activation_key, preview_enabled, shows_migration_placeholder,
     };
 
     #[test]
@@ -1491,6 +1501,48 @@ mod tests {
     }
 
     #[test]
+    fn migration_placeholder_is_limited_to_unported_workspaces() {
+        use horizon_launcher::next_navigation::Route;
+
+        for route in [
+            Route::Home,
+            Route::InstanceLibrary,
+            Route::InstanceDetails,
+            Route::VersionManager,
+            Route::AccountCenter,
+            Route::AccountDetails,
+            Route::ContentBrowser,
+            Route::InstalledContent,
+            Route::ModpackManager,
+            Route::ModWorkshop,
+            Route::WorldLibrary,
+            Route::ScreenshotLibrary,
+        ] {
+            assert!(
+                !shows_migration_placeholder(route),
+                "implemented route unexpectedly shows a migration placeholder: {route:?}"
+            );
+        }
+
+        for route in [
+            Route::ServerDashboard,
+            Route::ServerConsole,
+            Route::MultiplayerBrowser,
+            Route::Wardrobe,
+            Route::DiagnosticsOverview,
+            Route::DownloadQueue,
+            Route::CrashReports,
+            Route::GlobalSettings,
+            Route::InstanceSettings,
+        ] {
+            assert!(
+                shows_migration_placeholder(route),
+                "unported route is missing its migration placeholder: {route:?}"
+            );
+        }
+    }
+
+    #[test]
     fn home_quick_actions_target_the_existing_workspaces() {
         use horizon_launcher::next_navigation::Route;
 
@@ -1520,6 +1572,37 @@ mod tests {
         assert!(preview_enabled(Some("1")));
         for value in [None, Some(""), Some("0"), Some("true"), Some("yes")] {
             assert!(!preview_enabled(value));
+        }
+    }
+
+    #[test]
+    fn vietnamese_shell_navigation_labels_and_descriptions_are_translated() {
+        use horizon_launcher::next_navigation::ROUTES;
+
+        let translations: serde_json::Value = serde_json::from_str(include_str!("../lang/vi.json"))
+            .expect("Vietnamese translations are valid JSON");
+        for route in ROUTES {
+            let label_key = label(route.route);
+            let translated_label = translations
+                .get(label_key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_else(|| panic!("missing Vietnamese navigation label: {label_key}"));
+            assert_ne!(
+                translated_label, label_key,
+                "untranslated label: {label_key}"
+            );
+
+            let description_key = description(route.route);
+            let translated_description = translations
+                .get(description_key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_else(|| {
+                    panic!("missing Vietnamese route description: {description_key}")
+                });
+            assert_ne!(
+                translated_description, description_key,
+                "untranslated route description: {description_key}"
+            );
         }
     }
 }
