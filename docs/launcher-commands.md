@@ -376,6 +376,16 @@ The instances, each with its game folder (* = the one Play starts).
 
 MCP: `instance_list`.
 
+## `horizon-launcher instance path`
+
+Print an instance's game folder (its saves, options and packs), the selected one by default.
+
+    horizon-launcher instance path [INSTANCE]
+
+- `INSTANCE`: The instance (default: the selected one)
+
+MCP: `instance_path`.
+
 ## `horizon-launcher instance create`
 
 Make an instance: empty but for your options and name, or a copy of another one's worlds, options and packs.
