@@ -279,9 +279,17 @@ fn vietnamese_gpui_routes_and_descriptions_are_not_english_fallbacks() {
 
     for (english, vietnamese) in expected {
         let translated = table.get(english).map(String::as_str);
-        assert_eq!(translated, Some(vietnamese), "Vietnamese GPUI copy: {english:?}");
+        assert_eq!(
+            translated,
+            Some(vietnamese),
+            "Vietnamese GPUI copy: {english:?}"
+        );
         assert_ne!(translated, Some(english), "English fallback: {english:?}");
-        assert_eq!(holes(english), holes(vietnamese), "Vietnamese placeholders: {english:?}");
+        assert_eq!(
+            holes(english),
+            holes(vietnamese),
+            "Vietnamese placeholders: {english:?}"
+        );
     }
 }
 
