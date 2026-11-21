@@ -210,6 +210,82 @@ fn vietnamese_next_ui_preview_copy_is_reviewed() {
     }
 }
 #[test]
+fn vietnamese_gpui_routes_and_descriptions_are_not_english_fallbacks() {
+    let table: HashMap<String, String> =
+        serde_json::from_str(Language::Vietnamese.source()).unwrap();
+    let expected = [
+        ("Home", "Trang chủ"),
+        ("Instances", "Các bản cài đặt"),
+        ("Versions", "Phiên bản"),
+        ("Accounts", "Tài khoản"),
+        ("Account details", "Chi tiết tài khoản"),
+        ("Content", "Nội dung"),
+        ("Installed content", "Nội dung đã cài"),
+        ("Modpacks", "Gói mod"),
+        ("Mod Workshop", "Xưởng mod"),
+        ("Servers", "Máy chủ"),
+        ("Server console", "Bảng điều khiển máy chủ"),
+        ("Multiplayer", "Nhiều người chơi"),
+        ("Worlds", "Thế giới"),
+        ("Screenshots", "Ảnh chụp màn hình"),
+        ("Cosmetics", "Vật phẩm trang trí"),
+        ("Diagnostics", "Chẩn đoán"),
+        ("Downloads", "Tải xuống"),
+        ("Crash reports", "Báo cáo sự cố"),
+        ("Settings", "Cài đặt"),
+        ("Instance details", "Chi tiết bản cài đặt"),
+        ("Instance settings", "Cài đặt bản cài đặt"),
+        (
+            "Your game, instances and next action in one clear place.",
+            "Trò chơi, các bản cài đặt và hành động tiếp theo được tập hợp tại một nơi.",
+        ),
+        (
+            "Manage game profiles, versions, Java and per-instance configuration.",
+            "Quản lý hồ sơ trò chơi, phiên bản, Java và cấu hình riêng cho từng bản cài đặt.",
+        ),
+        (
+            "Manage Microsoft, Ely.by and offline identities without exposing credentials to the UI.",
+            "Quản lý tài khoản Microsoft, Ely.by và ngoại tuyến mà không để giao diện truy cập thông tin xác thực.",
+        ),
+        (
+            "Discover and manage validated Horizon content and mod packages.",
+            "Khám phá và quản lý nội dung Horizon cùng các gói mod đã được xác thực.",
+        ),
+        (
+            "Inspect native mods, resolve compatibility and run builds with live progress and logs.",
+            "Kiểm tra mod native, xử lý tương thích và biên dịch với tiến độ cùng nhật ký trực tiếp.",
+        ),
+        (
+            "Manage servers, multiplayer sessions and network diagnostics.",
+            "Quản lý máy chủ, phiên chơi nhiều người và chẩn đoán mạng.",
+        ),
+        (
+            "Browse worlds and captured game moments.",
+            "Duyệt thế giới đã lưu và những khoảnh khắc trong trò chơi.",
+        ),
+        (
+            "Manage skins and supported cosmetics.",
+            "Quản lý skin và vật phẩm trang trí được hỗ trợ.",
+        ),
+        (
+            "Inspect downloads, logs, failures and recovery information.",
+            "Theo dõi lượt tải, nhật ký, lỗi và thông tin khôi phục.",
+        ),
+        (
+            "Configure appearance, language, paths, Java and performance.",
+            "Tùy chỉnh giao diện, ngôn ngữ, đường dẫn, Java và hiệu năng.",
+        ),
+    ];
+
+    for (english, vietnamese) in expected {
+        let translated = table.get(english).map(String::as_str);
+        assert_eq!(translated, Some(vietnamese), "Vietnamese GPUI copy: {english:?}");
+        assert_ne!(translated, Some(english), "English fallback: {english:?}");
+        assert_eq!(holes(english), holes(vietnamese), "Vietnamese placeholders: {english:?}");
+    }
+}
+
+#[test]
 fn the_system_language_is_the_first_one_the_launcher_has() {
     assert_eq!(Language::pick(["pl-PL", "en-US"]), Language::Polish);
     assert_eq!(Language::pick(["ja-JP", "en-US"]), Language::Japanese);
