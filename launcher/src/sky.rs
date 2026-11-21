@@ -207,8 +207,8 @@ pub(crate) enum Motion {
 pub(crate) fn motion() -> Motion {
     static MOTION: LazyLock<Motion> = LazyLock::new(|| {
         #[cfg(target_os = "macos")]
-        let reduced = objc2_app_kit::NSWorkspace::sharedWorkspace()
-            .accessibilityDisplayShouldReduceMotion();
+        let reduced =
+            objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
         #[cfg(not(target_os = "macos"))]
         let reduced = false;
         let setting = std::env::var("HORIZON_LAUNCHER_MOTION").ok();
