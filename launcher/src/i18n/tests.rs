@@ -372,3 +372,13 @@ fn polish_entries_are_valid_and_keep_placeholders() {
         assert_eq!(holes(en), holes(said), "Polish: {en:?}");
     }
 }
+
+#[test]
+fn every_language_code_is_unique() {
+    let mut codes = BTreeSet::new();
+    for language in Language::ALL {
+        let code = serde_json::to_string(&language).unwrap();
+        assert!(codes.insert(code.clone()), "duplicate language code: {code}");
+    }
+    assert_eq!(codes.len(), Language::ALL.len());
+}
