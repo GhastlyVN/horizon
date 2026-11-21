@@ -227,6 +227,11 @@ enum ModpackCmd {
 enum InstanceCmd {
     /// The instances, each with its game folder (* = the one Play starts)
     List,
+    /// Print an instance's game folder (its saves, options and packs), the selected one by default
+    Path {
+        /// The instance (default: the selected one)
+        instance: Option<String>,
+    },
     /// Make an instance: empty but for your options and name, or a copy of another one's
     /// worlds, options and packs
     Create {
@@ -2934,6 +2939,17 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                 json(all.iter().map(|i| value(i, i.id == selected)).collect());
             } else {
                 all.iter().for_each(|i| line(i, i.id == selected));
+            }
+        }
+        InstanceCmd::Path { instance } => {
+            let found = match instance {
+                Some(name) => instances::find(&name)?,
+                None => instances::selected(),
+            };
+            if as_json {
+                json(serde_json::json!({ "id": found.id, "home": found.home }));
+            } else {
+                println!("{}", found.home.display());
             }
         }
         InstanceCmd::Create {
