@@ -283,7 +283,13 @@ pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let hash = crate::sources::sha1_hex(&bytes);
     let name = format!("background-{}.{ext}", &hash[..12]);
-    std::fs::write(dir.join(&name), &bytes).map_err(|e| format!("{name}: {e}"))?;
+    let kept = dir.join(&name);
+    if let Ok(meta) = std::fs::symlink_metadata(&kept) {
+        if !meta.file_type().is_file() {
+            return Err(format!("{name}: a symlink or folder is already there"));
+        }
+    }
+    std::fs::write(&kept, &bytes).map_err(|e| format!("{name}: {e}"))?;
     for old in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let other = old.file_name().to_string_lossy().into_owned();
         if other.starts_with("background-") && other != name {
