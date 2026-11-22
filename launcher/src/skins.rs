@@ -155,7 +155,10 @@ pub fn keep(dir: &Path, name: &str, file: &Path, cape: bool) -> Result<(), Strin
     let (skin, cape_file) = files(dir, name);
     let to = if cape { cape_file } else { skin };
     if to.symlink_metadata().is_ok() {
-        return Err(format!("{} is a link; refusing to write a skin through it.", to.display()));
+        return Err(format!(
+            "{} is a link; refusing to write a skin through it.",
+            to.display()
+        ));
     }
     std::fs::write(&to, bytes).map_err(|e| format!("{}: {e}", to.display()))
 }
