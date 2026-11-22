@@ -83,6 +83,14 @@ pub fn ensure(version: &Path) -> io::Result<PathBuf> {
 }
 
 fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if !meta.file_type().is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{}: not a regular file", path.display()),
+            ));
+        }
+    }
     if fs::read(path).ok().as_deref() != Some(bytes) {
         fs::write(path, bytes)?;
     }
@@ -99,6 +107,28 @@ fn same_file(a: &Path, b: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn the_bundle_refuses_a_linked_plist() {
+        use std::os::unix::fs::symlink;
+
+        let version =
+            std::env::temp_dir().join(format!("horizon-game-app-linked-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&version);
+        fs::create_dir_all(&version).unwrap();
+        fs::write(version.join("horizon-client"), "game").unwrap();
+        let contents = version.join(APP).join("Contents");
+        fs::create_dir_all(&contents).unwrap();
+        let victim = version.join("outside.plist");
+        fs::write(&victim, b"keep").unwrap();
+        symlink(&victim, contents.join("Info.plist")).unwrap();
+
+        let err = ensure(&version).unwrap_err();
+        assert!(err.to_string().contains("not a regular file"), "{err}");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        fs::remove_dir_all(&version).unwrap();
+    }
 
     #[test]
     fn the_bundle_links_the_version_programs_and_follows_a_replaced_one() {
