@@ -162,7 +162,10 @@ fn adding_a_pack_does_not_write_through_a_dangling_link() {
     let added = add(&home, &source).unwrap();
     assert_eq!(added.file, "Glass (2).zip");
     assert!(!victim.exists());
-    assert_eq!(fs::read(home.join("resourcepacks/Glass (2).zip")).unwrap(), fs::read(&source).unwrap());
+    assert_eq!(
+        fs::read(home.join("resourcepacks/Glass (2).zip")).unwrap(),
+        fs::read(&source).unwrap()
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

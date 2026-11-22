@@ -40,7 +40,10 @@ fn adding_a_data_pack_does_not_write_through_a_dangling_link() {
     let added = add(&world, &source).unwrap();
     assert_eq!(added.file, "Trades (2).zip");
     assert!(!victim.exists());
-    assert_eq!(fs::read(world.join("datapacks/Trades (2).zip")).unwrap(), fs::read(&source).unwrap());
+    assert_eq!(
+        fs::read(world.join("datapacks/Trades (2).zip")).unwrap(),
+        fs::read(&source).unwrap()
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
