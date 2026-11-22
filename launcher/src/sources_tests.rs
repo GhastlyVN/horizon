@@ -584,9 +584,11 @@ fn each_system_has_its_launcher_folders() {
     );
     assert!(got.contains(&"ATLauncher: C:/Users/r/AppData/Roaming/ATLauncher".into()));
     assert!(got.contains(&"PineconeMC: C:/Users/r/AppData/Roaming/ElyPrismLauncher".into()));
-    #[test]
-    #[cfg(unix)]
-    fn a_linked_manifest_destination_is_refused() {
+}
+
+#[test]
+#[cfg(unix)]
+fn a_linked_manifest_destination_is_refused() {
         use std::os::unix::fs::symlink;
 
         let scratch = Scratch::new("linked-manifest");
