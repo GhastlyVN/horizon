@@ -741,7 +741,10 @@ mod tests {
         place(&src, &dest).unwrap();
         assert_eq!(fs::read(&victim).unwrap(), b"keep");
         assert_eq!(fs::read(&dest).unwrap(), b"new");
-        assert!(fs::symlink_metadata(&temp).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&temp)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         fs::remove_dir_all(&root).unwrap();
     }
 
