@@ -116,6 +116,12 @@ fn load_with(
 ) -> Result<Versions, String> {
     match fetch(MANIFEST).and_then(|text| Versions::parse(&text).map(|v| (v, text))) {
         Ok((versions, text)) => {
+        // A symlink here would redirect the cache write outside the launcher folder.
+        if let Ok(meta) = fs::symlink_metadata(cache) {
+            if !meta.file_type().is_file() {
+                return Err(format!("{}: not a regular file", cache.display()));
+            }
+        }
             let _ =
                 fs::create_dir_all(cache.parent().unwrap()).and_then(|_| fs::write(cache, text));
             Ok(versions)
@@ -170,4 +176,23 @@ mod tests {
         assert_eq!(load_with(&cache, &offline).unwrap().all.len(), 3);
         fs::remove_dir_all(&dir).unwrap();
     }
+    #[test]
+    #[cfg(unix)]
+    fn a_linked_version_cache_is_refused() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("horizon-vcache-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("victim.json");
+        fs::write(&victim, b"keep").unwrap();
+        let cache = dir.join("version_manifest_v2.json");
+        symlink(&victim, &cache).unwrap();
+        let online = |_url: &str| Ok("{\"latest\":{},\"versions\":[]}".to_string());
+        let err = load_with(&cache, &online).unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
 }
