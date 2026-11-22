@@ -64,6 +64,26 @@ fn active_worlds_cannot_be_backed_up_copied_or_deleted() {
 }
 
 #[test]
+#[cfg(unix)]
+fn backup_and_copy_refuse_symlinks_inside_the_world() {
+    use std::os::unix::fs::symlink;
+
+    let home = scratch("world-symlink");
+    let dir = world(&home, "Linked", vec![("LevelName", name("Linked"))]);
+    let secret = home.join("secret.txt");
+    fs::write(&secret, b"do not copy").unwrap();
+    symlink(&secret, dir.join("region/outside.txt")).unwrap();
+    let w = find(&home, "Linked").unwrap();
+
+    assert!(backup(&home, &w).is_err());
+    assert!(copy(&w).is_err());
+    assert_eq!(fs::read(&secret).unwrap(), b"do not copy");
+    assert!(fs::read_dir(home.join("backups")).unwrap().next().is_none());
+    assert!(!home.join("saves/Linked (1)").exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn lists_what_each_world_is() {
     let home = scratch("list");
     let survival = world(

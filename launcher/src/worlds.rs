@@ -197,7 +197,14 @@ fn backup_at(
             entries.sort_by_key(|e| e.file_name());
             for e in entries {
                 let path = e.path();
-                if e.file_type()?.is_dir() {
+                let kind = e.file_type()?;
+                if kind.is_symlink() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("{} is a symlink", path.display()),
+                    ));
+                }
+                if kind.is_dir() {
                     stack.push(path);
                     continue;
                 }
@@ -242,7 +249,14 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     for e in fs::read_dir(from)? {
         let e = e?;
         let target = to.join(e.file_name());
-        if e.file_type()?.is_dir() {
+        let kind = e.file_type()?;
+        if kind.is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{} is a symlink", e.path().display()),
+            ));
+        }
+        if kind.is_dir() {
             copy_dir(&e.path(), &target)?;
         } else if e.file_name() != LOCK {
             fs::copy(e.path(), target)?;
