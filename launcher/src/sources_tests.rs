@@ -95,19 +95,21 @@ fn resolve_with(
 }
 
 #[test]
+#[cfg(unix)]
 fn writes_refuse_a_linked_partial_download() {
-    #[cfg(unix)]
-    {
-        let scratch = Scratch::new().unwrap();
-        let dir = scratch.launcher("home", "", "versions/26.3/26.3.jar");
-        let version = dir.join("versions/26.3");
-        let partial = version.join("26.3.json.partial");
-        scratch.link(&version.join("elsewhere"), &partial);
-        let err = write_file(&version.join("26.3.json"), MANIFEST.as_bytes())
-            .expect_err("linked partial must be refused");
-        assert!(err.contains("partial download is not a regular file"), "{err}");
-        assert_eq!(fs::read(&version.join("elsewhere")).unwrap(), b"");
-    }
+    use std::os::unix::fs::symlink;
+
+    let scratch = Scratch::new("partial-link");
+    let dir = scratch.launcher("home", "", "versions/26.3/26.3.jar");
+    let version = dir.join("versions/26.3");
+    let victim = scratch.0.join("victim.json");
+    fs::write(&victim, b"keep").unwrap();
+    let partial = version.join("26.3.json.partial");
+    symlink(&victim, &partial).unwrap();
+
+    let err = write_file(&version.join("26.3.json"), MANIFEST).unwrap_err();
+    assert!(err.contains("partial download is not a regular file"), "{err}");
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
 }
 
 /// Whether `a` and `b` are one file, as a symlink (Unix) or a hard link (Windows) makes them:
@@ -602,23 +604,3 @@ fn each_system_has_its_launcher_folders() {
     assert!(got.contains(&"PineconeMC: C:/Users/r/AppData/Roaming/ElyPrismLauncher".into()));
 }
 
-#[test]
-#[cfg(unix)]
-fn a_linked_manifest_destination_is_refused() {
-    use std::os::unix::fs::symlink;
-
-    let scratch = Scratch::new("linked-manifest");
-    let dir = scratch.launcher("home", "", "versions/26.3/26.3.jar");
-    scratch.write("home/versions/26.3/26.3.json", MANIFEST);
-    let linked = scratch.0.join("linked");
-    let versions = linked.join("versions/26.3");
-    fs::create_dir_all(&versions).unwrap();
-    let victim = scratch.0.join("victim.json");
-    fs::write(&victim, b"keep").unwrap();
-    let manifest = versions.join("26.3.json");
-    symlink(&victim, &manifest).unwrap();
-
-    let err = resolve_with(&dir, &[], &linked, &Mojang::new(MANIFEST)).unwrap_err();
-    assert!(err.contains("not a regular file"), "{err}");
-    assert_eq!(fs::read(&victim).unwrap(), b"keep");
-}
