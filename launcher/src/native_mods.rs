@@ -382,13 +382,62 @@ pub fn log_path() -> PathBuf {
     root().join("build.log")
 }
 
+#[cfg(unix)]
+fn metadata_is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+#[cfg(windows)]
+fn metadata_is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(any(unix, windows)))]
+fn metadata_is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
 fn refuse_linked_file(path: &Path) -> Result<(), String> {
     if let Ok(meta) = fs::symlink_metadata(path) {
-        if !meta.file_type().is_file() {
+        if metadata_is_link_or_reparse_point(&meta) || !meta.file_type().is_file() {
             return Err(format!("{}: not a regular file", path.display()));
         }
     }
     Ok(())
+}
+
+/// Opens the build log without following a symlink or Windows reparse point.
+/// The handle is checked before any caller truncates or writes to it.
+fn open_log(mut options: fs::OpenOptions) -> Result<fs::File, String> {
+    let path = log_path();
+    refuse_linked_file(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let metadata = file.metadata().map_err(|e| format!("{}: {e}", path.display()))?;
+    if metadata_is_link_or_reparse_point(&metadata) || !metadata.is_file() {
+        return Err(format!("{}: not a regular file", path.display()));
+    }
+    Ok(file)
+}
+
+fn open_log_append() -> Result<fs::File, String> {
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+    open_log(options)
 }
 
 /// Makes the build log fresh for a new attempt: its folder made, the last build's log
@@ -396,19 +445,18 @@ fn refuse_linked_file(path: &Path) -> Result<(), String> {
 /// the old file's contents.
 pub fn clear_log() -> Result<(), String> {
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
-    refuse_linked_file(&log_path())?;
-    fs::write(log_path(), "").map_err(|e| format!("{}: {e}", log_path().display()))
+    let log = open_log({
+        let mut options = fs::OpenOptions::new();
+        options.create(true).write(true);
+        options
+    })?;
+    log.set_len(0).map_err(|e| format!("{}: {e}", log_path().display()))
 }
 
 /// Appends `message` (with a newline) to the build log, so a failure that happens before any
 /// command runs is still recorded.
 pub fn append_log(message: &str) -> Result<(), String> {
-    refuse_linked_file(&log_path())?;
-    let mut log = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path())
-        .map_err(|e| format!("{}: {e}", log_path().display()))?;
+    let mut log = open_log_append()?;
     writeln!(log, "{message}").map_err(|e| e.to_string())
 }
 
@@ -810,13 +858,7 @@ fn warn_conflicts(mods: &[Bundle]) -> Vec<String> {
 
 /// Appends `text` to the build log, the way a compiler warning reads.
 fn log_warning(text: &str) {
-    if let Ok(mut log) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path())
-    {
-        let _ = writeln!(log, "warning: {text}");
-    }
+    let _ = append_log(&format!("warning: {text}"));
 }
 
 /// The one value the bundles pin for `which` (each mod's `get`), else `fallback`; mods that pin
@@ -1385,11 +1427,7 @@ impl Step {
 /// An error ends with its first `error` lines and the last lines: a failed build script's output
 /// alone could push the line naming its crate out of the last ones.
 fn run(mut cmd: Command, what: &str, mut line: impl FnMut(&str)) -> Result<(), String> {
-    let mut log = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path())
-        .map_err(|e| e.to_string())?;
+    let mut log = open_log_append()?;
     let _ = writeln!(log, "$ {cmd:?}");
     let stdout = log.try_clone().map_err(|e| e.to_string())?;
     let mut child = cmd
@@ -3924,6 +3962,9 @@ mod tests {
         let err = clear_log().unwrap_err();
         assert!(err.contains("not a regular file"), "{err}");
         let err = append_log("new").unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
+        log_warning("must not reach the linked target");
+        let err = run(Command::new("this-command-must-not-run"), "test build", |_| {}).unwrap_err();
         assert!(err.contains("not a regular file"), "{err}");
         assert_eq!(fs::read(&victim).unwrap(), b"keep");
 
