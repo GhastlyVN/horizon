@@ -409,7 +409,8 @@ fn saving_a_server_list_refuses_linked_temporary_files() {
     fs::write(&victim, b"keep").unwrap();
     symlink(&victim, home.join("servers.dat_new")).unwrap();
 
-    let err = List::default().save(&home).unwrap_err();
+    let list = List { entries: Vec::new() };
+    let err = list.save(&home).unwrap_err();
     assert!(err.contains("link"), "{err}");
     assert_eq!(fs::read(&victim).unwrap(), b"keep");
     fs::remove_dir_all(&home).unwrap();

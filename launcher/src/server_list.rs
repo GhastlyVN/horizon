@@ -60,15 +60,15 @@ fn entry(name: &str, ip: &str) -> Compound {
     .collect()
 }
 
-fn refuse_link(path: &Path) -> Result<(), String> {
+fn refuse_link(path: &Path) -> std::io::Result<()> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
-            "{} is a link; refusing to write through it.",
-            path.display()
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is a link; refusing to write through it.", path.display()),
         )),
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("{}: {e}", path.display())),
+        Err(e) => Err(e),
     }
 }
 
@@ -191,8 +191,6 @@ impl List {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
                 Err(e) => Err(e),
             })
-                false => Ok(()),
-            })
             .and_then(|()| fs::rename(&new, &current));
         written.map_err(|e| format!("Could not save the server list: {e}"))
     }
@@ -256,7 +254,7 @@ pub fn add_official(home: &Path, address: &str, previous: &[String]) -> Result<(
     if changed {
         list.save(home)?;
     }
-    refuse_link(&marker)?;
+    refuse_link(&marker).map_err(|e| e.to_string())?;
     fs::write(marker, format!("{address}\n")).map_err(|e| e.to_string())
 }
 
