@@ -315,3 +315,31 @@ fn atlauncher_loader_types_match_whatever_the_case() {
     assert!(atlauncher_loader(&json!({"loaderVersion": {"type": "Forge"}})).is_none());
     assert!(atlauncher_loader(&json!({})).is_none());
 }
+
+#[test]
+#[cfg(unix)]
+fn copying_a_game_does_not_follow_a_link() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("copy-link");
+    let game = root.join("game");
+    fs::create_dir_all(&game).unwrap();
+    let victim = root.join("victim.txt");
+    fs::write(&victim, b"keep").unwrap();
+    symlink(&victim, game.join("options.txt")).unwrap();
+    let found = Found {
+        launcher: "Test",
+        name: "Linked".into(),
+        minecraft: None,
+        loader: None,
+        game,
+        shared: false,
+    };
+
+    let to = root.join("instance");
+    let err = copy_game(&found, &to).unwrap_err();
+    assert!(err.to_string().contains("link"), "{err}");
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    assert!(!to.join("options.txt").exists());
+    fs::remove_dir_all(&root).unwrap();
+}
