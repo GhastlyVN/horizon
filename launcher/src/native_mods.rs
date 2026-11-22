@@ -382,17 +382,28 @@ pub fn log_path() -> PathBuf {
     root().join("build.log")
 }
 
+fn refuse_linked_file(path: &Path) -> Result<(), String> {
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if !meta.file_type().is_file() {
+            return Err(format!("{}: not a regular file", path.display()));
+        }
+    }
+    Ok(())
+}
+
 /// Makes the build log fresh for a new attempt: its folder made, the last build's log
 /// emptied. The error says why it couldn't, so the Build log page can show it instead of
 /// the old file's contents.
 pub fn clear_log() -> Result<(), String> {
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
+    refuse_linked_file(&log_path())?;
     fs::write(log_path(), "").map_err(|e| format!("{}: {e}", log_path().display()))
 }
 
 /// Appends `message` (with a newline) to the build log, so a failure that happens before any
 /// command runs is still recorded.
 pub fn append_log(message: &str) -> Result<(), String> {
+    refuse_linked_file(&log_path())?;
     let mut log = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -3897,4 +3908,28 @@ mod tests {
         let e = failure("horizon-mixins", "exit status: 1", &errors, &errors);
         assert!(e.contains("The end of its output") && e.matches("alsa-sys").count() == 1);
     }
+    #[test]
+    #[cfg(unix)]
+    fn a_linked_build_log_is_refused() {
+        use std::os::unix::fs::symlink;
+
+        let _guard = LOG_TEST.lock().unwrap();
+        clear_log().unwrap();
+        let victim = root().join("log-victim.txt");
+        fs::write(&victim, b"keep").unwrap();
+        let log = log_path();
+        let _ = fs::remove_file(&log);
+        symlink(&victim, &log).unwrap();
+
+        let err = clear_log().unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
+        let err = append_log("new").unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+
+        fs::remove_file(&log).unwrap();
+        fs::remove_file(&victim).unwrap();
+        fs::write(&log, b"").unwrap();
+    }
+
 }
