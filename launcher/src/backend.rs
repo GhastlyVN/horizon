@@ -5577,6 +5577,29 @@ pub fn {f}("
             Some(&Some(OsStr::new("kept")))
         );
     }
+
+    #[test]
+    #[cfg(unix)]
+    fn copying_a_folder_refuses_symlinked_entries() {
+        use std::os::unix::fs::symlink;
+
+        let root =
+            std::env::temp_dir().join(format!("horizon-backend-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let from = root.join("from");
+        fs::create_dir_all(from.join("nested")).unwrap();
+        let victim = root.join("victim.txt");
+        fs::write(&victim, b"keep").unwrap();
+        symlink(&victim, from.join("nested/link.txt")).unwrap();
+
+        let to = root.join("to");
+        let err = copy_dir(&from, &to).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        assert!(!to.join("nested/link.txt").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
 }
 
 #[cfg(test)]
@@ -5616,27 +5639,6 @@ mod portable_bundle_tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    #[cfg(unix)]
-    fn copying_a_folder_refuses_symlinked_entries() {
-        use std::os::unix::fs::symlink;
-
-        let root =
-            std::env::temp_dir().join(format!("horizon-backend-copy-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let from = root.join("from");
-        fs::create_dir_all(from.join("nested")).unwrap();
-        let victim = root.join("victim.txt");
-        fs::write(&victim, b"keep").unwrap();
-        symlink(&victim, from.join("nested/link.txt")).unwrap();
-
-        let to = root.join("to");
-        let err = copy_dir(&from, &to).unwrap_err();
-        assert!(err.to_string().contains("symlink"), "{err}");
-        assert_eq!(fs::read(&victim).unwrap(), b"keep");
-        assert!(!to.join("nested/link.txt").exists());
-        fs::remove_dir_all(&root).unwrap();
-    }
 
     #[test]
     fn portable_macos_app_uses_data_folder_next_to_bundle() {
