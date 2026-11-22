@@ -427,7 +427,9 @@ fn open_log(mut options: fs::OpenOptions) -> Result<fs::File, String> {
     let file = options
         .open(&path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    let metadata = file.metadata().map_err(|e| format!("{}: {e}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     if metadata_is_link_or_reparse_point(&metadata) || !metadata.is_file() {
         return Err(format!("{}: not a regular file", path.display()));
     }
@@ -450,7 +452,8 @@ pub fn clear_log() -> Result<(), String> {
         options.create(true).write(true);
         options
     })?;
-    log.set_len(0).map_err(|e| format!("{}: {e}", log_path().display()))
+    log.set_len(0)
+        .map_err(|e| format!("{}: {e}", log_path().display()))
 }
 
 /// Appends `message` (with a newline) to the build log, so a failure that happens before any
@@ -3964,7 +3967,12 @@ mod tests {
         let err = append_log("new").unwrap_err();
         assert!(err.contains("not a regular file"), "{err}");
         log_warning("must not reach the linked target");
-        let err = run(Command::new("this-command-must-not-run"), "test build", |_| {}).unwrap_err();
+        let err = run(
+            Command::new("this-command-must-not-run"),
+            "test build",
+            |_| {},
+        )
+        .unwrap_err();
         assert!(err.contains("not a regular file"), "{err}");
         assert_eq!(fs::read(&victim).unwrap(), b"keep");
 
