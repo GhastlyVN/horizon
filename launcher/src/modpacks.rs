@@ -447,7 +447,6 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
-
     #[test]
     fn resource_only_profile_can_play_without_enabling_or_overwriting_packs() {
         let root = std::env::temp_dir().join(format!(
