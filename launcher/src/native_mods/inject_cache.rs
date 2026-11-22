@@ -127,7 +127,8 @@ mod tests {
     fn touching_a_cache_does_not_follow_a_linked_stamp() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!("horizon-inject-cache-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("horizon-inject-cache-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let key = "abc";
         let snapshot = snapshot(&root, key);
