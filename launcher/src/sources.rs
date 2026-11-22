@@ -465,6 +465,12 @@ fn link_official_layout(
     fs::create_dir_all(&versions).map_err(|e| format!("{}: {e}", versions.display()))?;
     let manifest = versions.join(format!("{v}.json"));
     if let Some(source) = &found.manifest {
+        // A symlink here would redirect the copy outside the official layout.
+        if let Ok(meta) = fs::symlink_metadata(&manifest) {
+            if !meta.file_type().is_file() {
+                return Err(format!("{}: not a regular file", manifest.display()));
+            }
+        }
         fs::copy(source, &manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
     } else {
         fetch_manifest(pins, &manifest, fetch, log)?;
