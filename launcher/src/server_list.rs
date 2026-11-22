@@ -60,6 +60,18 @@ fn entry(name: &str, ip: &str) -> Compound {
     .collect()
 }
 
+fn refuse_link(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
+            "{} is a link; refusing to write through it.",
+            path.display()
+        )),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
 /// An address as the game connects to it: any case, 25565 when no port is given.
 fn same_address(a: &str, b: &str) -> bool {
     let norm = |ip: &str| {
@@ -166,10 +178,19 @@ impl List {
         };
         let bytes = nbt::write_named(&root, Limits::default()).map_err(|e| e.to_string())?;
         let (new, current) = (home.join("servers.dat_new"), home.join(FILE));
+        let old = home.join("servers.dat_old");
         let written = fs::create_dir_all(home)
+            .and_then(|()| refuse_link(&new))
             .and_then(|()| fs::write(&new, bytes))
-            .and_then(|()| match current.exists() {
-                true => fs::copy(&current, home.join("servers.dat_old")).map(|_| ()),
+            .and_then(|()| match current.symlink_metadata() {
+                Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("{} is a link; refusing to copy through it.", current.display()),
+                )),
+                Ok(_) => refuse_link(&old).and_then(|()| fs::copy(&current, &old).map(|_| ())),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e),
+            })
                 false => Ok(()),
             })
             .and_then(|()| fs::rename(&new, &current));
@@ -235,6 +256,7 @@ pub fn add_official(home: &Path, address: &str, previous: &[String]) -> Result<(
     if changed {
         list.save(home)?;
     }
+    refuse_link(&marker)?;
     fs::write(marker, format!("{address}\n")).map_err(|e| e.to_string())
 }
 
