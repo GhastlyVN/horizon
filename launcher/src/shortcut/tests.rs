@@ -223,3 +223,21 @@ fn shortcuts_are_made_found_renamed_and_removed() {
     assert!(err.contains("isn't this instance's shortcut"), "{err}");
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+#[cfg(unix)]
+fn writing_a_shortcut_does_not_follow_a_temp_link() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("temp-link");
+    let path = root.join("Hardcore (Horizon).desktop");
+    let temp = path.with_extension("horizon-tmp");
+    let victim = root.join("victim.txt");
+    fs::write(&victim, b"keep").unwrap();
+    symlink(&victim, &temp).unwrap();
+
+    let err = write(&path, b"shortcut", false).unwrap_err();
+    assert!(err.contains("link"), "{err}");
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    fs::remove_dir_all(&root).unwrap();
+}
