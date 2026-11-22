@@ -396,7 +396,10 @@ mod tests {
         let err = finish(&partial, &linked, &program(b"body"), &record).unwrap_err();
         assert!(err.to_string().contains("not a real directory"), "{err}");
         assert!(fs::read_dir(&victim).unwrap().next().is_none());
-        assert!(fs::symlink_metadata(&linked).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&linked)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]
