@@ -708,7 +708,10 @@ mod tests {
         let victim = root.join("victim");
         fs::write(&src, b"new").unwrap();
         fs::write(&victim, b"keep").unwrap();
-        let temp = root.join(format!("horizon-launcher.exe.update-{}", std::process::id()));
+        let temp = root.join(format!(
+            "horizon-launcher.exe.update-{}",
+            std::process::id()
+        ));
         symlink(&victim, &temp).unwrap();
 
         let err = place(&src, &dest).unwrap_err();
@@ -717,5 +720,4 @@ mod tests {
         assert!(!dest.exists());
         fs::remove_dir_all(&root).unwrap();
     }
-
 }
