@@ -643,6 +643,12 @@ pub fn install(home: &Path, found: &Resolved, packed: &Packed) -> Result<Origin,
         ));
     }
     fs::create_dir_all(home.join(INSTALLED)).map_err(|e| e.to_string())?;
+    // A symlink here would redirect the installed bundle outside the game folder.
+    if let Ok(meta) = fs::symlink_metadata(&target) {
+        if !meta.file_type().is_file() {
+            return Err(format!("{}: not a regular file", target.display()));
+        }
+    }
     fs::copy(&packed.file, &target).map_err(|e| format!("{}: {e}", target.display()))?;
     let record = Origin {
         id: packed.id.clone(),
