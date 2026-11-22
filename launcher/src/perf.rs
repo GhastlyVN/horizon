@@ -8,7 +8,7 @@
 //! the cold one), page switching, repeated release list fetches, idle CPU.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -55,6 +55,14 @@ impl Machine {
             load_average: horizon_bench::load_average(),
         }
     }
+}
+
+/// The local report log stays in its own file; a link planted there is never followed.
+fn write_report(path: &Path, bytes: &[u8]) {
+    if std::fs::symlink_metadata(path).is_ok_and(|m| !m.file_type().is_file()) {
+        return;
+    }
+    let _ = std::fs::write(path, bytes);
 }
 
 impl Perf {
@@ -187,7 +195,8 @@ impl Perf {
         if let Some(dir) = self.path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let _ = std::fs::write(&self.path, json + "\n");
+        let line = json + "\n";
+        write_report(&self.path, line.as_bytes());
     }
 }
 
@@ -435,6 +444,29 @@ fn binary_bytes() -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn a_linked_benchmark_report_is_not_written_through() {
+        use std::os::unix::fs::symlink;
+
+        let dir =
+            std::env::temp_dir().join(format!("horizon-perf-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("outside.json");
+        std::fs::write(&victim, b"keep").unwrap();
+        let report = dir.join("report.json");
+        symlink(&victim, &report).unwrap();
+
+        write_report(&report, b"{}");
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert!(std::fs::symlink_metadata(&report)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn performance_tracking_starts_without_hardware_probes() {
