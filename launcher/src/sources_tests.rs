@@ -108,7 +108,10 @@ fn writes_refuse_a_linked_partial_download() {
     symlink(&victim, &partial).unwrap();
 
     let err = write_file(&version.join("26.3.json"), MANIFEST).unwrap_err();
-    assert!(err.contains("partial download is not a regular file"), "{err}");
+    assert!(
+        err.contains("partial download is not a regular file"),
+        "{err}"
+    );
     assert_eq!(fs::read(&victim).unwrap(), b"keep");
 }
 
