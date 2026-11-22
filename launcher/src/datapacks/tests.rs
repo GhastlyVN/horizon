@@ -25,6 +25,26 @@ fn zip_file(path: &Path, files: &[(&str, &str)]) {
 const META: &str = r#"{"pack":{"pack_format":88,"description":"More trades"}}"#;
 
 #[test]
+#[cfg(unix)]
+fn adding_a_data_pack_does_not_write_through_a_dangling_link() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("add-link");
+    let world = root.join("world");
+    let source = root.join("Trades.zip");
+    zip_file(&source, &[("pack.mcmeta", META)]);
+    fs::create_dir_all(world.join("datapacks")).unwrap();
+    let victim = root.join("victim.zip");
+    symlink(&victim, world.join("datapacks/Trades.zip")).unwrap();
+
+    let added = add(&world, &source).unwrap();
+    assert_eq!(added.file, "Trades (2).zip");
+    assert!(!victim.exists());
+    assert_eq!(fs::read(world.join("datapacks/Trades (2).zip")).unwrap(), fs::read(&source).unwrap());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn lists_adds_and_removes_as_the_game_reads_them() {
     let root = scratch("all");
     let world = root.join("saves/My World");

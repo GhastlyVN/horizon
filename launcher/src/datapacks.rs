@@ -104,7 +104,7 @@ pub fn add(world: &Path, file: &Path) -> Result<DataPack, String> {
             1 => dir.join(name),
             n => dir.join(format!("{stem} ({n}).zip")),
         })
-        .find(|p| !p.exists())
+        .find(|p| fs::symlink_metadata(p).is_err())
         .unwrap();
     fs::copy(file, &target).map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
     let file_name = target.file_name().unwrap().to_string_lossy().into_owned();
