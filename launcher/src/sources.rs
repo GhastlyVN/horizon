@@ -445,8 +445,14 @@ pub(crate) fn write_file(path: &Path, data: &[u8]) -> Result<(), String> {
         "{}.partial",
         path.file_name().unwrap().to_string_lossy()
     ));
-    if partial.symlink_metadata().is_ok_and(|m| !m.file_type().is_file()) {
-        return Err(format!("{}: partial download is not a regular file", partial.display()));
+    if partial
+        .symlink_metadata()
+        .is_ok_and(|m| !m.file_type().is_file())
+    {
+        return Err(format!(
+            "{}: partial download is not a regular file",
+            partial.display()
+        ));
     }
     fs::write(&partial, data)
         .and_then(|_| fs::rename(&partial, path))

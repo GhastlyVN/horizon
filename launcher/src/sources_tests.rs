@@ -603,4 +603,3 @@ fn each_system_has_its_launcher_folders() {
     assert!(got.contains(&"ATLauncher: C:/Users/r/AppData/Roaming/ATLauncher".into()));
     assert!(got.contains(&"PineconeMC: C:/Users/r/AppData/Roaming/ElyPrismLauncher".into()));
 }
-
