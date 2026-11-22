@@ -1304,7 +1304,14 @@ pub(crate) fn copy_dir_except(from: &Path, to: &Path, skip: Option<&Path>) -> st
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{} is a symlink", entry.path().display()),
+            ));
+        }
+        if kind.is_dir() {
             if Some(entry.path().as_path()) != skip {
                 copy_dir_except(&entry.path(), &target, skip)?;
             }
@@ -5607,6 +5614,30 @@ mod portable_bundle_tests {
             Some(root.join("Horizon-Data"))
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn copying_a_folder_refuses_symlinked_entries() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!
+            "horizon-backend-copy-{}",
+            std::process::id()
+        );
+        let _ = fs::remove_dir_all(&root);
+        let from = root.join("from");
+        fs::create_dir_all(from.join("nested")).unwrap();
+        let victim = root.join("victim.txt");
+        fs::write(&victim, b"keep").unwrap();
+        symlink(&victim, from.join("nested/link.txt")).unwrap();
+
+        let to = root.join("to");
+        let err = copy_dir(&from, &to).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        assert!(!to.join("nested/link.txt").exists());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
