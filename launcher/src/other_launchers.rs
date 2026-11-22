@@ -473,7 +473,10 @@ pub fn copy_game(found: &Found, to: &Path) -> std::io::Result<()> {
         if kind.is_symlink() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("{} is a link; refusing to import through it.", entry.path().display()),
+                format!(
+                    "{} is a link; refusing to import through it.",
+                    entry.path().display()
+                ),
             ));
         }
         if kind.is_dir() {
