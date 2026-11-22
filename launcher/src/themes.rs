@@ -295,6 +295,9 @@ pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
             if !meta.file_type().is_file() {
                 return Err(format!("{name}: a symlink or folder is already there"));
             }
+            if meta.len() > MAX_BYTES {
+                return Err(format!("{name} is over 40 MB."));
+            }
             let existing = std::fs::read(&kept).map_err(|e| format!("{name}: {e}"))?;
             if existing != bytes {
                 return Err(format!(
