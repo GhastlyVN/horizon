@@ -603,5 +603,4 @@ fn each_system_has_its_launcher_folders() {
         assert!(err.contains("not a regular file"), "{err}");
         assert_eq!(fs::read(&victim).unwrap(), b"keep");
     }
-
 }
