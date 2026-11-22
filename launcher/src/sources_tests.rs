@@ -589,20 +589,20 @@ fn each_system_has_its_launcher_folders() {
 #[test]
 #[cfg(unix)]
 fn a_linked_manifest_destination_is_refused() {
-        use std::os::unix::fs::symlink;
+    use std::os::unix::fs::symlink;
 
-        let scratch = Scratch::new("linked-manifest");
-        let dir = scratch.launcher("home", "base", "versions/26.3/26.3.jar");
-        let linked = scratch.0.join("linked");
-        let versions = linked.join("versions/26.3");
-        fs::create_dir_all(&versions).unwrap();
-        let victim = scratch.0.join("victim.json");
-        fs::write(&victim, b"keep").unwrap();
-        let manifest = versions.join("26.3.json");
-        symlink(&victim, &manifest).unwrap();
+    let scratch = Scratch::new("linked-manifest");
+    let dir = scratch.launcher("home", "base", "versions/26.3/26.3.jar");
+    scratch.write("home/base/versions/26.3/26.3.json", MANIFEST);
+    let linked = scratch.0.join("linked");
+    let versions = linked.join("versions/26.3");
+    fs::create_dir_all(&versions).unwrap();
+    let victim = scratch.0.join("victim.json");
+    fs::write(&victim, b"keep").unwrap();
+    let manifest = versions.join("26.3.json");
+    symlink(&victim, &manifest).unwrap();
 
-        let err = resolve_with(&dir, &[], &linked, &Mojang::new(MANIFEST)).unwrap_err();
-        assert!(err.contains("not a regular file"), "{err}");
-        assert_eq!(fs::read(&victim).unwrap(), b"keep");
-    }
+    let err = resolve_with(&dir, &[], &linked, &Mojang::new(MANIFEST)).unwrap_err();
+    assert!(err.contains("not a regular file"), "{err}");
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
 }
