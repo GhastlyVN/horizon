@@ -592,8 +592,8 @@ fn a_linked_manifest_destination_is_refused() {
     use std::os::unix::fs::symlink;
 
     let scratch = Scratch::new("linked-manifest");
-    let dir = scratch.launcher("home", "base", "versions/26.3/26.3.jar");
-    scratch.write("home/base/versions/26.3/26.3.json", MANIFEST);
+    let dir = scratch.launcher("home", "", "versions/26.3/26.3.jar");
+    scratch.write("home/versions/26.3/26.3.json", MANIFEST);
     let linked = scratch.0.join("linked");
     let versions = linked.join("versions/26.3");
     fs::create_dir_all(&versions).unwrap();
