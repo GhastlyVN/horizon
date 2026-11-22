@@ -387,7 +387,10 @@ mod tests {
         let head = profile_face_with(&account, &dir, &dir, &|_| Some(png.clone())).unwrap();
         assert_eq!(head[0], [12, 34, 56, 255]);
         assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
-        assert!(std::fs::symlink_metadata(&file).unwrap().file_type().is_symlink());
+        assert!(std::fs::symlink_metadata(&file)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
