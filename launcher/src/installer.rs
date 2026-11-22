@@ -194,7 +194,33 @@ fn place(src: &Path, dest: &Path) -> io::Result<()> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no folder"))?;
     let name = dest.file_name().unwrap_or_default().to_string_lossy();
     let pid = std::process::id();
-    let temp = dir.join(format!("{name}.update-{pid}"));
+    // Create exclusively: a stale file, symlink, or racing path is never opened or truncated.
+    let mut created = None;
+    for n in 0..100 {
+        let temp = if n == 0 {
+            dir.join(format!("{name}.update-{pid}"))
+        } else {
+            dir.join(format!("{name}.update-{pid}-{n}"))
+        };
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(file) => {
+                created = Some((temp, file));
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    let (temp, mut output) = created.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not reserve a unique update temporary file",
+        )
+    })?;
     // A leftover from an earlier run (the same pid, a crash) must not stop the rename.
     let mut old = dir.join(format!("{name}.old-{pid}-0"));
     for n in 1..100 {
@@ -203,18 +229,16 @@ fn place(src: &Path, dest: &Path) -> io::Result<()> {
         }
         old = dir.join(format!("{name}.old-{pid}-{n}"));
     }
-    if let Ok(meta) = fs::symlink_metadata(&temp) {
-        let kind = meta.file_type();
-        if kind.is_symlink() || !kind.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("{} is not a regular file", temp.display()),
-            ));
-        }
-    }
-    if let Err(e) = fs::copy(src, &temp) {
+    let copied = (|| {
+        let mut input = fs::File::open(src)?;
+        io::copy(&mut input, &mut output)?;
+        output.set_permissions(fs::metadata(src)?.permissions())?;
+        output.sync_all()
+    })();
+    drop(output);
+    if let Err(error) = copied {
         let _ = fs::remove_file(&temp);
-        return Err(e);
+        return Err(error);
     }
     match fs::rename(dest, &old) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => {
@@ -696,7 +720,7 @@ mod tests {
     }
     #[test]
     #[cfg(unix)]
-    fn placing_a_binary_refuses_a_linked_temporary_file() {
+    fn placing_a_binary_skips_a_linked_temporary_file() {
         use std::os::unix::fs::symlink;
 
         let root =
@@ -714,10 +738,31 @@ mod tests {
         ));
         symlink(&victim, &temp).unwrap();
 
-        let err = place(&src, &dest).unwrap_err();
-        assert!(err.to_string().contains("not a regular file"), "{err}");
+        place(&src, &dest).unwrap();
         assert_eq!(fs::read(&victim).unwrap(), b"keep");
-        assert!(!dest.exists());
+        assert_eq!(fs::read(&dest).unwrap(), b"new");
+        assert!(fs::symlink_metadata(&temp).unwrap().file_type().is_symlink());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn placing_a_binary_preserves_a_stale_temporary_file() {
+        let root =
+            std::env::temp_dir().join(format!("horizon-installer-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let src = root.join("new");
+        let dest = root.join("horizon-launcher.exe");
+        let temp = root.join(format!(
+            "horizon-launcher.exe.update-{}",
+            std::process::id()
+        ));
+        fs::write(&src, b"new").unwrap();
+        fs::write(&temp, b"stale").unwrap();
+
+        place(&src, &dest).unwrap();
+        assert_eq!(fs::read(&temp).unwrap(), b"stale");
+        assert_eq!(fs::read(&dest).unwrap(), b"new");
         fs::remove_dir_all(&root).unwrap();
     }
 }
