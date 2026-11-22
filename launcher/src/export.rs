@@ -80,8 +80,9 @@ pub fn export(
 ) -> Result<Exported, String> {
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     for f in FILES {
-        if home.join(f).is_file() {
-            files.push((f.to_string(), home.join(f)));
+        let path = home.join(f);
+        if path.is_file() && !path.is_symlink() {
+            files.push((f.to_string(), path));
         }
     }
     for folder in FOLDERS {
@@ -192,6 +193,9 @@ fn walk(home: &Path, dir: &Path, skip: &[&str], out: &mut Vec<(String, PathBuf)>
             continue;
         }
         let path = e.path();
+        if matches!(e.file_type(), Ok(kind) if kind.is_symlink()) {
+            continue;
+        }
         if path.is_dir() {
             walk(home, &path, &[], out);
         } else if let Ok(rel) = path.strip_prefix(home) {
