@@ -5599,7 +5599,6 @@ pub fn {f}("
         assert!(!to.join("nested/link.txt").exists());
         fs::remove_dir_all(&root).unwrap();
     }
-
 }
 
 #[cfg(test)]
@@ -5638,7 +5637,6 @@ mod portable_bundle_tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
-
 
     #[test]
     fn portable_macos_app_uses_data_folder_next_to_bundle() {
