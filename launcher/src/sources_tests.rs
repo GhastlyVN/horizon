@@ -94,6 +94,22 @@ fn resolve_with(
     }
 }
 
+#[test]
+fn writes_refuse_a_linked_partial_download() {
+    #[cfg(unix)]
+    {
+        let scratch = Scratch::new().unwrap();
+        let dir = scratch.launcher("home", "", "versions/26.3/26.3.jar");
+        let version = dir.join("versions/26.3");
+        let partial = version.join("26.3.json.partial");
+        scratch.link(&version.join("elsewhere"), &partial);
+        let err = write_file(&version.join("26.3.json"), MANIFEST.as_bytes())
+            .expect_err("linked partial must be refused");
+        assert!(err.contains("partial download is not a regular file"), "{err}");
+        assert_eq!(fs::read(&version.join("elsewhere")).unwrap(), b"");
+    }
+}
+
 /// Whether `a` and `b` are one file, as a symlink (Unix) or a hard link (Windows) makes them:
 /// a byte written through `a` shows in `b`. Both are left as they were.
 fn same_file(a: &Path, b: &Path) -> bool {
