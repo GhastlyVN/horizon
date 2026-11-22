@@ -116,12 +116,12 @@ fn load_with(
 ) -> Result<Versions, String> {
     match fetch(MANIFEST).and_then(|text| Versions::parse(&text).map(|v| (v, text))) {
         Ok((versions, text)) => {
-        // A symlink here would redirect the cache write outside the launcher folder.
-        if let Ok(meta) = fs::symlink_metadata(cache) {
-            if !meta.file_type().is_file() {
-                return Err(format!("{}: not a regular file", cache.display()));
+            // A symlink here would redirect the cache write outside the launcher folder.
+            if let Ok(meta) = fs::symlink_metadata(cache) {
+                if !meta.file_type().is_file() {
+                    return Err(format!("{}: not a regular file", cache.display()));
+                }
             }
-        }
             let _ =
                 fs::create_dir_all(cache.parent().unwrap()).and_then(|_| fs::write(cache, text));
             Ok(versions)
@@ -194,5 +194,4 @@ mod tests {
         assert_eq!(fs::read(&victim).unwrap(), b"keep");
         let _ = fs::remove_dir_all(&dir);
     }
-
 }
