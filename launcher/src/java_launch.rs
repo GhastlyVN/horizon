@@ -280,6 +280,9 @@ pub fn unpack_natives(
                 continue;
             }
             let out = to.join(&name);
+            if fs::symlink_metadata(&out).is_ok_and(|m| !m.file_type().is_file()) {
+                continue;
+            }
             fs::create_dir_all(out.parent().unwrap()).map_err(|e| e.to_string())?;
             let mut file = fs::File::create(&out).map_err(|e| format!("{}: {e}", out.display()))?;
             std::io::copy(&mut entry, &mut file).map_err(|e| e.to_string())?;

@@ -440,6 +440,52 @@ fn a_window_size_and_a_server_to_join() {
 }
 
 #[test]
+#[cfg(unix)]
+fn linked_native_extraction_target_is_not_written_through() {
+    use std::os::unix::fs::symlink;
+
+    let minecraft = scratch("native-link");
+    let natives = scratch("native-link-out");
+    let jar = under(&minecraft, "libraries/org/test/native/native.jar");
+    fs::create_dir_all(jar.parent().unwrap()).unwrap();
+    {
+        let file = fs::File::create(&jar).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("libnative.so", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"native").unwrap();
+        zip.finish().unwrap();
+    }
+    fs::create_dir_all(&natives).unwrap();
+    let victim = natives.join("outside.so");
+    fs::write(&victim, b"keep").unwrap();
+    symlink(&victim, natives.join("libnative.so")).unwrap();
+
+    let version = json!({
+        "libraries": [{
+            "natives": {
+                "linux": "native-${arch}",
+                "windows": "native-${arch}",
+                "osx": "native-${arch}"
+            },
+            "downloads": {"classifiers": {
+                "native-64": {"path": "org/test/native/native.jar"},
+                "native-32": {"path": "org/test/native/native.jar"}
+            }},
+            "extract": {"exclude": ["META-INF/"]}
+        }]
+    });
+    unpack_natives(&version, &minecraft, "linux", &natives).unwrap();
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    assert!(fs::symlink_metadata(natives.join("libnative.so"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    let _ = fs::remove_dir_all(&minecraft);
+    let _ = fs::remove_dir_all(&natives);
+}
+
+#[test]
 fn server_addresses_split_into_host_and_port() {
     assert_eq!(host_and_port("mc.example.org"), ("mc.example.org", 25565));
     assert_eq!(
