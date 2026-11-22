@@ -101,8 +101,8 @@ fn request_to(method: &str, url: &str) -> ureq::Request {
     .request(method, url)
 }
 
-/// One request's result: the status and the JSON body (empty when there is none). Transport
-/// errors name the service, never the URL's query or the request.
+/// One request's result: the status and the JSON body (null only for an empty body). Transport
+/// errors name the service, never the URL's query or the request; malformed JSON is an error.
 fn send(request: ureq::Request, body: Option<Body>, service: &str) -> Result<(u16, Value), String> {
     let result = match body {
         None => request.call(),
@@ -120,7 +120,13 @@ fn send(request: ureq::Request, body: Option<Body>, service: &str) -> Result<(u1
     };
     let status = response.status();
     let text = response.into_string().unwrap_or_default();
-    Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+    let body = if text.trim().is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_str(&text)
+            .map_err(|_| format!("{service} returned an invalid response."))?
+    };
+    Ok((status, body))
 }
 
 enum Body<'a> {

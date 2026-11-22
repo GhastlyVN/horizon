@@ -19,6 +19,8 @@ struct Mock {
     launcher_login_refused: Option<u16>,
     /// Mojang's session server refuses `join` (the token was revoked since it was renewed).
     join_refused: bool,
+    /// The device-code endpoint answers with malformed JSON instead of a token offer.
+    malformed_json: bool,
     /// Every request: method, path and body.
     log: Vec<(String, String, String)>,
 }
@@ -38,6 +40,9 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
         ("POST", "/ms/devicecode") => {
             assert_eq!(form("client_id").as_deref(), Some("test-client"));
             assert_eq!(form("scope").as_deref(), Some(SCOPE));
+            if mock.malformed_json {
+                return (200, "{not json".to_string());
+            }
             reply(
                 200,
                 json!({"user_code": "ABCD-EFGH", "device_code": "dev-1", "verification_uri": "https://www.microsoft.com/link", "expires_in": 900, "interval": 1}),
@@ -233,6 +238,16 @@ fn finish_ms_sign_in(tokens: MsTokens) -> (Account, Secrets) {
 fn test_endpoints() -> Endpoints {
     let (_, ep) = mock(|_| {});
     ep
+}
+
+#[test]
+fn a_malformed_service_response_is_an_error_not_an_empty_sign_in() {
+    let (_, ep) = mock(|m| m.malformed_json = true);
+    let error = device_code(&ep, "test-client").unwrap_err();
+    assert!(
+        error.contains("Microsoft returned an invalid response"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
