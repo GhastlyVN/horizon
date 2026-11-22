@@ -5621,10 +5621,8 @@ mod portable_bundle_tests {
     fn copying_a_folder_refuses_symlinked_entries() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!
-            "horizon-backend-copy-{}",
-            std::process::id()
-        );
+        let root =
+            std::env::temp_dir().join(format!("horizon-backend-copy-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let from = root.join("from");
         fs::create_dir_all(from.join("nested")).unwrap();
