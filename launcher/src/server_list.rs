@@ -64,7 +64,10 @@ fn refuse_link(path: &Path) -> std::io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("{} is a link; refusing to write through it.", path.display()),
+            format!(
+                "{} is a link; refusing to write through it.",
+                path.display()
+            ),
         )),
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -185,7 +188,10 @@ impl List {
             .and_then(|()| match current.symlink_metadata() {
                 Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("{} is a link; refusing to copy through it.", current.display()),
+                    format!(
+                        "{} is a link; refusing to copy through it.",
+                        current.display()
+                    ),
                 )),
                 Ok(_) => refuse_link(&old).and_then(|()| fs::copy(&current, &old).map(|_| ())),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
