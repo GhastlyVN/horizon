@@ -32,7 +32,13 @@ fn adding_a_data_pack_does_not_write_through_a_dangling_link() {
     let root = scratch("add-link");
     let world = root.join("world");
     let source = root.join("Trades.zip");
-    zip_file(&source, &[("pack.mcmeta", META)]);
+    zip_file(
+        &source,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say hi"),
+        ],
+    );
     fs::create_dir_all(world.join("datapacks")).unwrap();
     let victim = root.join("victim.zip");
     symlink(&victim, world.join("datapacks/Trades.zip")).unwrap();
