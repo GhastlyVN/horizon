@@ -533,6 +533,25 @@ fn switching_what_an_instance_plays_keeps_its_worlds_mods_and_settings() {
 }
 
 #[test]
+#[cfg(unix)]
+fn copying_an_instance_refuses_symlinks_inside_the_game_folder() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("copy-symlink");
+    let from = root.join("from");
+    let to = root.join("to");
+    put(&from.join("saves/World/level.dat"), "world");
+    let secret = root.join("secret.txt");
+    fs::write(&secret, b"do not copy").unwrap();
+    symlink(&secret, from.join("saves/World/outside.txt")).unwrap();
+
+    assert!(copy_home(&from, &to).is_err());
+    assert_eq!(fs::read(&secret).unwrap(), b"do not copy");
+    assert!(!to.join("saves/World/outside.txt").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn instances_load_validated_rejects_corrupt_json() {
     let root = std::env::temp_dir().join(format!("horizon-instances-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
