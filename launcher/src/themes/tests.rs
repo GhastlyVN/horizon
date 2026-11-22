@@ -130,6 +130,31 @@ fn an_existing_background_with_different_bytes_is_not_overwritten() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+#[test]
+fn an_oversized_existing_background_is_rejected_before_reuse() {
+    let root = std::env::temp_dir().join(format!(
+        "horizon-background-oversized-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("data");
+    std::fs::create_dir_all(&dir).unwrap();
+    let picture = root.join("dusk.png");
+    image::RgbImage::new(160, 90).save(&picture).unwrap();
+    let name = keep_background(&dir, &picture).unwrap();
+    let kept = dir.join(&name);
+
+    let output = std::fs::OpenOptions::new().write(true).open(&kept).unwrap();
+    output.set_len(MAX_BYTES + 1).unwrap();
+    drop(output);
+
+    assert!(keep_background(&dir, &picture)
+        .unwrap_err()
+        .contains("over 40 MB"));
+    assert_eq!(std::fs::metadata(&kept).unwrap().len(), MAX_BYTES + 1);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn a_symlink_at_the_kept_name_is_not_overwritten() {
