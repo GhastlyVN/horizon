@@ -203,6 +203,15 @@ fn place(src: &Path, dest: &Path) -> io::Result<()> {
         }
         old = dir.join(format!("{name}.old-{pid}-{n}"));
     }
+    if let Ok(meta) = fs::symlink_metadata(&temp) {
+        let kind = meta.file_type();
+        if kind.is_symlink() || !kind.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("{} is not a regular file", temp.display()),
+            ));
+        }
+    }
     if let Err(e) = fs::copy(src, &temp) {
         let _ = fs::remove_file(&temp);
         return Err(e);
@@ -685,4 +694,28 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&dir);
     }
+    #[test]
+    #[cfg(unix)]
+    fn placing_a_binary_refuses_a_linked_temporary_file() {
+        use std::os::unix::fs::symlink;
+
+        let root =
+            std::env::temp_dir().join(format!("horizon-installer-place-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let src = root.join("new");
+        let dest = root.join("horizon-launcher.exe");
+        let victim = root.join("victim");
+        fs::write(&src, b"new").unwrap();
+        fs::write(&victim, b"keep").unwrap();
+        let temp = root.join(format!("horizon-launcher.exe.update-{}", std::process::id()));
+        symlink(&victim, &temp).unwrap();
+
+        let err = place(&src, &dest).unwrap_err();
+        assert!(err.to_string().contains("not a regular file"), "{err}");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        assert!(!dest.exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
 }
