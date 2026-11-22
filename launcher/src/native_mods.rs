@@ -3931,5 +3931,4 @@ mod tests {
         fs::remove_file(&victim).unwrap();
         fs::write(&log, b"").unwrap();
     }
-
 }
