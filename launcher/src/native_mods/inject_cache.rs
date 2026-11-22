@@ -87,7 +87,18 @@ pub(super) fn snapshot(root: &Path, key: &str) -> PathBuf {
 /// Record a hit and retain the three most recently used snapshots.
 pub(super) fn touch_and_prune(root: &Path, key: &str) -> Result<(), String> {
     let dir = root.join("patched");
-    fs::write(dir.join(key).join(".last-used"), b"").map_err(|e| e.to_string())?;
+    let snapshot = snapshot(root, key);
+    for link in [&snapshot, &snapshot.join(".last-used")] {
+        if let Ok(metadata) = link.symlink_metadata() {
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "{} is a link; refusing to touch cache through it.",
+                    link.display()
+                ));
+            }
+        }
+    }
+    fs::write(snapshot.join(".last-used"), b"").map_err(|e| e.to_string())?;
     let mut entries = fs::read_dir(&dir)
         .map_err(|e| e.to_string())?
         .flatten()
@@ -105,4 +116,29 @@ pub(super) fn touch_and_prune(root: &Path, key: &str) -> Result<(), String> {
         fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn touching_a_cache_does_not_follow_a_linked_stamp() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("horizon-inject-cache-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let key = "abc";
+        let snapshot = snapshot(&root, key);
+        fs::create_dir_all(&snapshot).unwrap();
+        let victim = root.join("victim.txt");
+        fs::write(&victim, b"keep").unwrap();
+        symlink(&victim, snapshot.join(".last-used")).unwrap();
+
+        let err = touch_and_prune(&root, key).unwrap_err();
+        assert!(err.contains("link"), "{err}");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        fs::remove_dir_all(&root).unwrap();
+    }
 }
