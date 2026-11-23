@@ -441,7 +441,7 @@ fn a_window_size_and_a_server_to_join() {
 
 #[test]
 #[cfg(unix)]
-fn linked_native_extraction_target_is_not_written_through() {
+fn linked_native_extraction_target_is_refused() {
     use std::os::unix::fs::symlink;
 
     let minecraft = scratch("native-link");
@@ -475,7 +475,7 @@ fn linked_native_extraction_target_is_not_written_through() {
             "extract": {"exclude": ["META-INF/"]}
         }]
     });
-    unpack_natives(&version, &minecraft, "linux", &natives).unwrap();
+    assert!(unpack_natives(&version, &minecraft, "linux", &natives).is_err());
     assert_eq!(fs::read(&victim).unwrap(), b"keep");
     assert!(fs::symlink_metadata(natives.join("libnative.so"))
         .unwrap()
@@ -483,6 +483,72 @@ fn linked_native_extraction_target_is_not_written_through() {
         .is_symlink());
     let _ = fs::remove_dir_all(&minecraft);
     let _ = fs::remove_dir_all(&natives);
+}
+
+#[test]
+#[cfg(unix)]
+fn linked_native_extraction_parent_is_refused() {
+    use std::os::unix::fs::symlink;
+
+    let minecraft = scratch("native-parent-link");
+    let natives = scratch("native-parent-link-out");
+    let outside = scratch("native-parent-link-victim");
+    let jar = under(&minecraft, "libraries/org/test/native/native.jar");
+    fs::create_dir_all(jar.parent().unwrap()).unwrap();
+    {
+        let file = fs::File::create(&jar).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("nested/libnative.so", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"native").unwrap();
+        zip.finish().unwrap();
+    }
+    symlink(&outside, natives.join("nested")).unwrap();
+    let victim = outside.join("libnative.so");
+
+    let version = json!({
+        "libraries": [{
+            "natives": {
+                "linux": "native-${arch}",
+                "windows": "native-${arch}",
+                "osx": "native-${arch}"
+            },
+            "downloads": {"classifiers": {
+                "native-64": {"path": "org/test/native/native.jar"},
+                "native-32": {"path": "org/test/native/native.jar"}
+            }},
+            "extract": {"exclude": ["META-INF/"]}
+        }]
+    });
+    assert!(unpack_natives(&version, &minecraft, "linux", &natives).is_err());
+    assert!(!victim.exists());
+    let _ = fs::remove_dir_all(&minecraft);
+    let _ = fs::remove_dir_all(&natives);
+    let _ = fs::remove_dir_all(&outside);
+}
+
+#[test]
+#[cfg(unix)]
+fn native_extraction_writes_through_its_open_handle_after_path_swap() {
+    use std::io::Cursor;
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("native-open-handle");
+    let victim = root.join("outside.so");
+    let output = root.join("libnative.so");
+    let moved = root.join("opened-native.so");
+    fs::write(&victim, b"keep").unwrap();
+    let mut bytes = Cursor::new(b"native".to_vec());
+
+    write_native_entry_with(&root, Path::new("libnative.so"), &mut bytes, || {
+        fs::rename(&output, &moved).unwrap();
+        symlink(&victim, &output).unwrap();
+    })
+    .unwrap();
+
+    assert_eq!(fs::read(&moved).unwrap(), b"native");
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
