@@ -8,7 +8,10 @@
 //! the cold one), page switching, repeated release list fetches, idle CPU.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -55,6 +58,61 @@ impl Machine {
             load_average: horizon_bench::load_average(),
         }
     }
+}
+
+static REPORT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Publish a complete report atomically; the destination is never opened for writing.
+fn write_report(path: &Path, bytes: &[u8]) {
+    write_report_with(path, bytes, || {});
+}
+
+fn write_report_with(path: &Path, bytes: &[u8], before_publish: impl FnOnce()) {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| !metadata.file_type().is_file()) {
+        return;
+    }
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    for _ in 0..8 {
+        let id = REPORT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let temporary = parent.join(format!(".{name}.{}.{id}.tmp", std::process::id()));
+        let Ok(mut file) = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        else {
+            continue;
+        };
+        let written = file.write_all(bytes).and_then(|()| file.sync_all());
+        drop(file);
+        if written.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+            return;
+        }
+        // Rename replaces a destination link itself instead of opening its target.
+        before_publish();
+        if std::fs::rename(&temporary, path).is_ok() {
+            return;
+        }
+        let _ = std::fs::remove_file(&temporary);
+        return;
+    }
+}
+
+/// The benchmark child writes its one-shot scratch result with exclusive creation.
+fn write_bench_result(path: &Path, bytes: &[u8]) -> bool {
+    write_bench_result_with(path, bytes, || {})
+}
+
+fn write_bench_result_with(path: &Path, bytes: &[u8], after_open: impl FnOnce()) -> bool {
+    let Ok(mut file) = OpenOptions::new().write(true).create_new(true).open(path) else {
+        return false;
+    };
+    // The retained handle remains safe even if the directory entry is replaced now.
+    after_open();
+    file.write_all(bytes).is_ok()
 }
 
 impl Perf {
@@ -187,7 +245,8 @@ impl Perf {
         if let Some(dir) = self.path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let _ = std::fs::write(&self.path, json + "\n");
+        let line = json + "\n";
+        write_report(&self.path, line.as_bytes());
     }
 }
 
@@ -305,7 +364,7 @@ impl Bench {
             "rss_mb": horizon_bench::rss_bytes(pid).map(|b| b as f64 / f64::from(1 << 20)),
             "cpu_idle_pct": cpu_idle_pct,
         });
-        let _ = std::fs::write(&self.out, result.to_string());
+        let _ = write_bench_result(&self.out, result.to_string().as_bytes());
         Step::Quit
     }
 }
@@ -435,6 +494,97 @@ fn binary_bytes() -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn a_linked_benchmark_report_is_not_written_through() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("horizon-perf-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("outside.json");
+        std::fs::write(&victim, b"keep").unwrap();
+        let report = dir.join("report.json");
+        symlink(&victim, &report).unwrap();
+
+        write_report(&report, b"{}");
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert!(std::fs::symlink_metadata(&report)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_link_planted_before_atomic_report_publish_is_replaced_not_followed() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("horizon-perf-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("outside.json");
+        let report = dir.join("report.json");
+        std::fs::write(&victim, b"keep").unwrap();
+
+        write_report_with(&report, b"{}", || symlink(&victim, &report).unwrap());
+
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert_eq!(std::fs::read(&report).unwrap(), b"{}");
+        assert!(!std::fs::symlink_metadata(&report)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn benchmark_scratch_refuses_an_existing_link() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("horizon-bench-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("outside.json");
+        let output = dir.join("result.json");
+        std::fs::write(&victim, b"keep").unwrap();
+        symlink(&victim, &output).unwrap();
+
+        assert!(!write_bench_result(&output, b"{}"));
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert!(std::fs::symlink_metadata(&output)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn benchmark_scratch_writes_through_its_open_handle_after_path_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("horizon-bench-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("outside.json");
+        let output = dir.join("result.json");
+        let moved = dir.join("opened-result.json");
+        std::fs::write(&victim, b"keep").unwrap();
+
+        let written = write_bench_result_with(&output, b"safe", || {
+            std::fs::rename(&output, &moved).unwrap();
+            symlink(&victim, &output).unwrap();
+        });
+
+        assert!(written);
+        assert_eq!(std::fs::read(&moved).unwrap(), b"safe");
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn performance_tracking_starts_without_hardware_probes() {
