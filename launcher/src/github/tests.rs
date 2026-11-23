@@ -118,6 +118,24 @@ fn rate_limit_is_429_or_403_with_githubs_headers() {
 }
 
 #[test]
+#[cfg(unix)]
+fn a_symlink_at_the_partial_name_is_not_followed() {
+    use std::os::unix::fs::symlink;
+
+    let cache = scratch("partial-link");
+    let file = cache.join("answer.json");
+    let partial = file.with_extension("partial");
+    let victim = cache.join("victim.json");
+    fs::write(&victim, b"keep me").unwrap();
+    symlink(&victim, &partial).unwrap();
+
+    write_kept(&file, RELEASES, "", &list("nightly"), T0);
+
+    assert_eq!(fs::read(&victim).unwrap(), b"keep me");
+    assert!(!file.exists());
+}
+
+#[test]
 fn etag_is_kept_and_a_304_reads_the_saved_copy() {
     let cache = scratch("etag");
     let sent = RefCell::new(Vec::new());

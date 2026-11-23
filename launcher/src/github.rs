@@ -264,7 +264,16 @@ fn write_kept(file: &Path, url: &str, etag: &str, body: &serde_json::Value, save
         return;
     };
     let partial = file.with_extension("partial");
-    if fs::create_dir_all(dir).is_ok() && fs::write(&partial, text).is_ok() {
+    if fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    // fs::write follows an existing symlink; never let a cache write land outside the cache.
+    if let Ok(meta) = fs::symlink_metadata(&partial) {
+        if !meta.file_type().is_file() {
+            return;
+        }
+    }
+    if fs::write(&partial, text).is_ok() {
         let _ = fs::rename(&partial, file);
     }
 }
