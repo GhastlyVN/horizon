@@ -206,19 +206,27 @@ pub(crate) enum Motion {
 
 pub(crate) fn motion() -> Motion {
     static MOTION: LazyLock<Motion> = LazyLock::new(|| {
-        match std::env::var("HORIZON_LAUNCHER_MOTION").as_deref() {
-            Ok("off" | "reduced") => return Motion::Still,
-            Ok("always") => return Motion::Always,
-            Ok("full") => return Motion::InFront,
-            _ => {}
-        }
         #[cfg(target_os = "macos")]
-        if objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion() {
-            return Motion::Still;
-        }
-        Motion::InFront
+        let reduced =
+            objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
+        #[cfg(not(target_os = "macos"))]
+        let reduced = false;
+        let setting = std::env::var("HORIZON_LAUNCHER_MOTION").ok();
+        motion_for(setting.as_deref(), reduced)
     });
     *MOTION
+}
+
+/// An explicit choice wins over the system's reduce-motion preference; an unknown value falls
+/// back to it.
+fn motion_for(setting: Option<&str>, reduced: bool) -> Motion {
+    match setting {
+        Some("off" | "reduced") => Motion::Still,
+        Some("always") => Motion::Always,
+        Some("full") => Motion::InFront,
+        _ if reduced => Motion::Still,
+        _ => Motion::InFront,
+    }
 }
 
 /// The animation's own time: it runs only while the sky moves, so a window that comes back
@@ -616,6 +624,25 @@ mod tests {
             .filter(|(top, _, _)| *top < limit)
             .map(|(_, _, c)| c)
             .collect()
+    }
+
+    #[test]
+    fn an_explicit_motion_choice_wins_over_the_system_preference() {
+        use Motion::*;
+        for (setting, reduced, expected) in [
+            (Some("off"), false, Still),
+            (Some("reduced"), true, Still),
+            (Some("always"), true, Always),
+            (Some("full"), true, InFront),
+            (Some("unknown"), false, InFront),
+            (None, true, Still),
+            (None, false, InFront),
+        ] {
+            assert!(
+                motion_for(setting, reduced) == expected,
+                "setting {setting:?}, reduced={reduced}"
+            );
+        }
     }
 
     #[test]
