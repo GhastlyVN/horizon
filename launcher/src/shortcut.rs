@@ -314,6 +314,14 @@ fn write(path: &Path, bytes: &[u8], program: bool) -> Result<(), String> {
         fs::create_dir_all(dir).map_err(fail)?;
     }
     let temp = path.with_extension("horizon-tmp");
+    if let Ok(metadata) = temp.symlink_metadata() {
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "{} is a link; refusing to write a shortcut through it.",
+                temp.display()
+            ));
+        }
+    }
     fs::write(&temp, bytes).map_err(fail)?;
     #[cfg(unix)]
     if program {
