@@ -1,3 +1,4 @@
+successfully downloaded text file (SHA: f4a8218e17fa7f7311ea7918afdf447ba9aebe29)
 //! The command that starts the real Minecraft: Java Edition, read from its version JSON as the
 //! official launcher reads it: the main class, the classpath of this system's libraries and the
 //! client jar, the JVM and game arguments with their rules and `${…}` placeholders (or the old
@@ -246,7 +247,10 @@ pub fn classpath(version: &Value, minecraft: &Path, os: &str) -> Result<Vec<Path
 fn native_path_error(path: &Path) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
-        format!("{}: refusing a linked or non-directory extraction parent", path.display()),
+        format!(
+            "{}: refusing a linked or non-directory extraction parent",
+            path.display()
+        ),
     )
 }
 
@@ -276,9 +280,8 @@ fn windows_file_identity(file: &File) -> io::Result<(u32, u32, u32)> {
     };
 
     let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-    let succeeded = unsafe {
-        GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr())
-    };
+    let succeeded =
+        unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) };
     if succeeded == 0 {
         return Err(io::Error::last_os_error());
     }
@@ -310,9 +313,9 @@ fn same_native_file(path: &Path, file: &File) -> io::Result<bool> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         let mut options = OpenOptions::new();
-        options.write(true).custom_flags(
-            windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT,
-        );
+        options
+            .write(true)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
         let current = options.open(path)?;
         let current_metadata = current.metadata()?;
         if !current_metadata.is_file() || metadata_is_reparse_point(&current_metadata) {
@@ -329,9 +332,7 @@ fn same_native_file(path: &Path, file: &File) -> io::Result<bool> {
 
 fn ensure_native_root(root: &Path) -> io::Result<()> {
     match fs::symlink_metadata(root) {
-        Ok(metadata) if metadata.is_dir() && !metadata_is_reparse_point(&metadata) => {
-            Ok(())
-        }
+        Ok(metadata) if metadata.is_dir() && !metadata_is_reparse_point(&metadata) => Ok(()),
         Ok(_) => Err(native_path_error(root)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             fs::create_dir_all(root)?;
@@ -348,7 +349,11 @@ fn ensure_native_root(root: &Path) -> io::Result<()> {
 
 fn ensure_native_parents(root: &Path, relative: &Path) -> io::Result<()> {
     let mut current = root.to_path_buf();
-    for component in relative.parent().unwrap_or_else(|| Path::new("")).components() {
+    for component in relative
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .components()
+    {
         let Component::Normal(name) = component else {
             return Err(native_path_error(&current));
         };
@@ -401,10 +406,7 @@ fn open_native_output(path: &Path) -> io::Result<File> {
 
     let file = options.open(path)?;
     let opened = file.metadata()?;
-    if !opened.is_file()
-        || metadata_is_reparse_point(&opened)
-        || !same_native_file(path, &file)?
-    {
+    if !opened.is_file() || metadata_is_reparse_point(&opened) || !same_native_file(path, &file)? {
         return Err(native_path_error(path));
     }
     file.set_len(0)?;
