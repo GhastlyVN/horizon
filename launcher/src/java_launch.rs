@@ -10,8 +10,9 @@
 use crate::mojang;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::fs::{self, File, Metadata, OpenOptions};
+use std::io::{self, Read};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 /// Who plays: the account's name, UUID, Minecraft access token and Xbox user id.
@@ -242,6 +243,187 @@ pub fn classpath(version: &Value, minecraft: &Path, os: &str) -> Result<Vec<Path
     Ok(paths)
 }
 
+fn native_path_error(path: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("{}: refusing a linked or non-directory extraction parent", path.display()),
+    )
+}
+
+fn metadata_is_reparse_point(metadata: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        metadata.file_type().is_symlink()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+fn same_native_file(left: &Metadata, right: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        left.dev() == right.dev() && left.ino() == right.ino()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        match (
+            left.volume_serial_number(),
+            left.file_index(),
+            right.volume_serial_number(),
+            right.file_index(),
+        ) {
+            (Some(left_volume), Some(left_index), Some(right_volume), Some(right_index)) => {
+                left_volume == right_volume && left_index == right_index
+            }
+            _ => left.len() == right.len() && left.modified().ok() == right.modified().ok(),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        left.len() == right.len() && left.modified().ok() == right.modified().ok()
+    }
+}
+
+fn ensure_native_root(root: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(root) {
+        Ok(metadata)
+            if metadata.is_dir() && !metadata_is_reparse_point(&metadata) =>
+        {
+            Ok(())
+        }
+        Ok(_) => Err(native_path_error(root)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir_all(root)?;
+            let metadata = fs::symlink_metadata(root)?;
+            if metadata.is_dir() && !metadata_is_reparse_point(&metadata) {
+                Ok(())
+            } else {
+                Err(native_path_error(root))
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn ensure_native_parents(root: &Path, relative: &Path) -> io::Result<()> {
+    let mut current = root.to_path_buf();
+    for component in relative.parent().unwrap_or_else(|| Path::new("")).components() {
+        let Component::Normal(name) = component else {
+            return Err(native_path_error(&current));
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata)
+                if metadata.is_dir() && !metadata_is_reparse_point(&metadata) =>
+            {
+                continue;
+            }
+            Ok(_) => return Err(native_path_error(&current)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                match fs::create_dir(&current) {
+                    Ok(()) => {}
+                    Err(create_error) if create_error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(create_error) => return Err(create_error),
+                }
+                let metadata = fs::symlink_metadata(&current)?;
+                if !metadata.is_dir() || metadata_is_reparse_point(&metadata) {
+                    return Err(native_path_error(&current));
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn open_native_output(path: &Path) -> io::Result<File> {
+    let before = match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.is_file() || metadata_is_reparse_point(&metadata) {
+                return Err(native_path_error(path));
+            }
+            Some(metadata)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+
+    let mut options = OpenOptions::new();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(
+            windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT,
+        );
+    }
+
+    let mut file = options.open(path)?;
+    let opened = file.metadata()?;
+    if !opened.is_file()
+        || metadata_is_reparse_point(&opened)
+        || before
+            .as_ref()
+            .is_some_and(|metadata| !same_native_file(metadata, &opened))
+    {
+        return Err(native_path_error(path));
+    }
+    let after_open = fs::symlink_metadata(path)?;
+    if !after_open.is_file()
+        || metadata_is_reparse_point(&after_open)
+        || !same_native_file(&after_open, &opened)
+    {
+        return Err(native_path_error(path));
+    }
+    file.set_len(0)?;
+    Ok(file)
+}
+
+fn write_native_entry_with(
+    root: &Path,
+    relative: &Path,
+    entry: &mut impl Read,
+    after_open: impl FnOnce(),
+) -> io::Result<()> {
+    ensure_native_parents(root, relative)?;
+    let out = root.join(relative);
+    let mut file = open_native_output(&out)?;
+    // Recheck parents and the leaf after opening. Once this succeeds, the retained
+    // handle is the only destination used by the write, even if the path is swapped.
+    ensure_native_parents(root, relative)?;
+    let opened = file.metadata()?;
+    let path_after = fs::symlink_metadata(&out)?;
+    if !path_after.is_file()
+        || metadata_is_reparse_point(&path_after)
+        || !same_native_file(&path_after, &opened)
+    {
+        return Err(native_path_error(&out));
+    }
+    after_open();
+    io::copy(entry, &mut file)?;
+    Ok(())
+}
+
+fn write_native_entry(root: &Path, relative: &Path, entry: &mut impl Read) -> io::Result<()> {
+    write_native_entry_with(root, relative, entry, || {})
+}
+
 /// Unpacks this system's natives of an old version (a library's classifier) into `to`, without
 /// what the library's `extract.exclude` names (META-INF/). Versions since 1.19 have none.
 pub fn unpack_natives(
@@ -250,7 +432,7 @@ pub fn unpack_natives(
     os: &str,
     to: &Path,
 ) -> Result<(), String> {
-    fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    ensure_native_root(to).map_err(|error| format!("{}: {error}", to.display()))?;
     for library in version["libraries"].as_array().into_iter().flatten() {
         if !allowed(&library["rules"], os, &[]) {
             continue;
@@ -280,12 +462,8 @@ pub fn unpack_natives(
                 continue;
             }
             let out = to.join(&name);
-            if fs::symlink_metadata(&out).is_ok_and(|m| !m.file_type().is_file()) {
-                continue;
-            }
-            fs::create_dir_all(out.parent().unwrap()).map_err(|e| e.to_string())?;
-            let mut file = fs::File::create(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-            std::io::copy(&mut entry, &mut file).map_err(|e| e.to_string())?;
+            write_native_entry(to, &name, &mut entry)
+                .map_err(|error| format!("{}: {error}", out.display()))?;
         }
     }
     Ok(())
