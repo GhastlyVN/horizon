@@ -310,7 +310,9 @@ fn same_native_file(path: &Path, file: &File) -> io::Result<bool> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         let mut options = OpenOptions::new();
-        options.write(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        options.write(true).custom_flags(
+            windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT,
+        );
         let current = options.open(path)?;
         let current_metadata = current.metadata()?;
         if !current_metadata.is_file() || metadata_is_reparse_point(&current_metadata) {
