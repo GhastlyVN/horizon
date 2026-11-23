@@ -122,3 +122,25 @@ fn forgetting_a_name_drops_its_files() {
     forget(&dir, "Alex");
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+#[cfg(unix)]
+fn keeping_a_look_does_not_write_through_a_link() {
+    use std::os::unix::fs::symlink;
+
+    let root = std::env::temp_dir().join(format!("horizon-skins-link-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let source = root.join("alex.png");
+    std::fs::write(&source, png(&mapped(64))).unwrap();
+    let dir = root.join("skins");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (skin, _) = files(&dir, "Alex");
+    let victim = root.join("victim.png");
+    symlink(&victim, &skin).unwrap();
+
+    let err = keep(&dir, "Alex", &source, false).unwrap_err();
+    assert!(err.contains("link"), "{err}");
+    assert!(!victim.exists());
+    std::fs::remove_dir_all(&root).unwrap();
+}
