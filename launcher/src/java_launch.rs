@@ -1,4 +1,3 @@
-successfully downloaded text file (SHA: f4a8218e17fa7f7311ea7918afdf447ba9aebe29)
 //! The command that starts the real Minecraft: Java Edition, read from its version JSON as the
 //! official launcher reads it: the main class, the classpath of this system's libraries and the
 //! client jar, the JVM and game arguments with their rules and `${…}` placeholders (or the old

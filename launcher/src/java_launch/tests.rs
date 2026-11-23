@@ -1,4 +1,3 @@
-successfully downloaded text file (SHA: 4a2682c25cec5ba12a62eabd0ba1da1c2af9cdbc)
 //! Version files shaped like Mojang's (a 1.21 and a 1.8.9), with the files they name made up in
 //! a scratch folder.
 use super::*;
