@@ -169,6 +169,30 @@ fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
 }
 
 #[test]
+#[cfg(unix)]
+fn a_zip_never_follows_links_out_of_the_game_folder() {
+    use std::os::unix::fs::symlink;
+
+    let home = home("zip-link");
+    let secret = home.parent().unwrap().join("horizon-export-secret.txt");
+    fs::write(&secret, b"do not share").unwrap();
+    symlink(&secret, home.join("resourcepacks/Linked.zip")).unwrap();
+    let outside_dir = home.parent().unwrap().join("horizon-export-secret-dir");
+    put(&outside_dir.join("secret.txt"), b"also private");
+    symlink(&outside_dir, home.join("resourcepacks/LinkedDir")).unwrap();
+
+    let out = home.join("out/Shared.zip");
+    export(&home, "Shared", Format::Zip, &[], &[], &out).unwrap();
+    let names = names(&out);
+    assert!(!names.iter().any(|n| n.contains("Linked")));
+    assert!(names.contains(&"resourcepacks/Own.zip".to_string()));
+
+    fs::remove_dir_all(&outside_dir).unwrap();
+    fs::remove_file(&secret).unwrap();
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
 fn an_mrpack_lists_what_modrinth_serves_and_carries_the_rest() {
     let home = home("mrpack");
     let linked = linkable(&home, &served);
