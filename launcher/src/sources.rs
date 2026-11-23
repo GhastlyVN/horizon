@@ -445,6 +445,15 @@ pub(crate) fn write_file(path: &Path, data: &[u8]) -> Result<(), String> {
         "{}.partial",
         path.file_name().unwrap().to_string_lossy()
     ));
+    if partial
+        .symlink_metadata()
+        .is_ok_and(|m| !m.file_type().is_file())
+    {
+        return Err(format!(
+            "{}: partial download is not a regular file",
+            partial.display()
+        ));
+    }
     fs::write(&partial, data)
         .and_then(|_| fs::rename(&partial, path))
         .map_err(error)
@@ -465,6 +474,12 @@ fn link_official_layout(
     fs::create_dir_all(&versions).map_err(|e| format!("{}: {e}", versions.display()))?;
     let manifest = versions.join(format!("{v}.json"));
     if let Some(source) = &found.manifest {
+        // A symlink here would redirect the copy outside the official layout.
+        if let Ok(meta) = fs::symlink_metadata(&manifest) {
+            if !meta.file_type().is_file() {
+                return Err(format!("{}: not a regular file", manifest.display()));
+            }
+        }
         fs::copy(source, &manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
     } else {
         fetch_manifest(pins, &manifest, fetch, log)?;
