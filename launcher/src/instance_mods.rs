@@ -50,6 +50,15 @@ fn project_icons_file() -> PathBuf {
     backend::data_dir().join("mod-browser/project-icons.json")
 }
 
+/// Keeps the offline icon cache inside its own file, never writing through a link.
+fn write_project_icons(file: &Path, json: &[u8]) {
+    if std::fs::symlink_metadata(file).is_ok_and(|m| !m.file_type().is_file()) {
+        return;
+    }
+    let _ = std::fs::create_dir_all(file.parent().unwrap_or(Path::new(".")));
+    let _ = std::fs::write(file, json);
+}
+
 #[derive(Default)]
 pub(super) struct InstanceMods {
     home: Option<PathBuf>,
@@ -267,9 +276,7 @@ impl Launcher {
                 let urls = &mut this.project_icons.urls;
                 urls.extend(found);
                 if let Ok(json) = serde_json::to_vec(urls) {
-                    let file = project_icons_file();
-                    let _ = std::fs::create_dir_all(file.parent().unwrap_or(Path::new(".")));
-                    let _ = std::fs::write(file, json);
+                    write_project_icons(&project_icons_file(), &json);
                 }
                 cx.notify();
             });
@@ -593,6 +600,25 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_linked_project_icon_cache_is_not_written_through() {
+        use std::os::unix::fs::symlink;
+
+        let scratch = TestHome::new();
+        let file = scratch.0.join("project-icons.json");
+        let victim = scratch.0.join("outside.json");
+        std::fs::write(&victim, b"keep").unwrap();
+        symlink(&victim, &file).unwrap();
+
+        write_project_icons(&file, b"{}");
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert!(std::fs::symlink_metadata(&file)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]
