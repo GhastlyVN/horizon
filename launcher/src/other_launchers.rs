@@ -469,7 +469,17 @@ pub fn copy_game(found: &Found, to: &Path) -> std::io::Result<()> {
         if !wanted {
             continue;
         }
-        if entry.file_type()?.is_dir() {
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "{} is a link; refusing to import through it.",
+                    entry.path().display()
+                ),
+            ));
+        }
+        if kind.is_dir() {
             crate::backend::copy_dir(&entry.path(), &to.join(name.as_ref()))?;
         } else {
             fs::copy(entry.path(), to.join(name.as_ref()))?;
