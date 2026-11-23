@@ -54,6 +54,14 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     // Back up the previous valid state, if any, so a crash or corrupt write can be recovered.
     if path.exists() {
         let bak = path.with_extension("bak");
+        // fs::copy follows links; a linked state or backup would read or destroy another file.
+        for file in [path, &bak] {
+            if let Ok(meta) = fs::symlink_metadata(file) {
+                if !meta.file_type().is_file() {
+                    return Err(format!("{file:?}: not a regular file"));
+                }
+            }
+        }
         let _ = fs::copy(path, &bak);
     }
 
@@ -181,6 +189,25 @@ mod tests {
         atomic_write_bytes(&path, b"new").unwrap();
         assert!(path.with_extension("bak").exists());
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_symlinked_backup_is_not_overwritten() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch("bak-link");
+        let path = dir.join("state.json");
+        let bak = path.with_extension("bak");
+        let victim = dir.join("victim.json");
+        fs::write(&path, "old").unwrap();
+        fs::write(&victim, b"keep me").unwrap();
+        symlink(&victim, &bak).unwrap();
+
+        assert!(atomic_write_bytes(&path, b"new").is_err());
+        assert_eq!(fs::read(&victim).unwrap(), b"keep me");
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
