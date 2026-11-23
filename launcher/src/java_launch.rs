@@ -10,8 +10,9 @@
 use crate::mojang;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::fs::{self, File, Metadata, OpenOptions};
+use std::io::{self, Read};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 /// Who plays: the account's name, UUID, Minecraft access token and Xbox user id.
@@ -242,6 +243,199 @@ pub fn classpath(version: &Value, minecraft: &Path, os: &str) -> Result<Vec<Path
     Ok(paths)
 }
 
+fn native_path_error(path: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "{}: refusing a linked or non-directory extraction parent",
+            path.display()
+        ),
+    )
+}
+
+fn metadata_is_reparse_point(metadata: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        metadata.file_type().is_symlink()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+#[cfg(windows)]
+fn windows_file_identity(file: &File) -> io::Result<(u32, u32, u32)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    let succeeded =
+        unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) };
+    if succeeded == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let information = unsafe { information.assume_init() };
+    Ok((
+        information.dwVolumeSerialNumber,
+        information.nFileIndexHigh,
+        information.nFileIndexLow,
+    ))
+}
+
+fn same_native_file(path: &Path, file: &File) -> io::Result<bool> {
+    let path_metadata = fs::symlink_metadata(path)?;
+    let opened = file.metadata()?;
+    if !path_metadata.is_file()
+        || metadata_is_reparse_point(&path_metadata)
+        || !opened.is_file()
+        || metadata_is_reparse_point(&opened)
+    {
+        return Ok(false);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(path_metadata.dev() == opened.dev() && path_metadata.ino() == opened.ino())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+        let current = options.open(path)?;
+        let current_metadata = current.metadata()?;
+        if !current_metadata.is_file() || metadata_is_reparse_point(&current_metadata) {
+            return Ok(false);
+        }
+        Ok(windows_file_identity(&current)? == windows_file_identity(file)?)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Ok(path_metadata.len() == opened.len()
+            && path_metadata.modified().ok() == opened.modified().ok())
+    }
+}
+
+fn ensure_native_root(root: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(root) {
+        Ok(metadata) if metadata.is_dir() && !metadata_is_reparse_point(&metadata) => Ok(()),
+        Ok(_) => Err(native_path_error(root)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir_all(root)?;
+            let metadata = fs::symlink_metadata(root)?;
+            if metadata.is_dir() && !metadata_is_reparse_point(&metadata) {
+                Ok(())
+            } else {
+                Err(native_path_error(root))
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn ensure_native_parents(root: &Path, relative: &Path) -> io::Result<()> {
+    let mut current = root.to_path_buf();
+    for component in relative
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .components()
+    {
+        let Component::Normal(name) = component else {
+            return Err(native_path_error(&current));
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.is_dir() && !metadata_is_reparse_point(&metadata) => {
+                continue;
+            }
+            Ok(_) => return Err(native_path_error(&current)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                match fs::create_dir(&current) {
+                    Ok(()) => {}
+                    Err(create_error) if create_error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(create_error) => return Err(create_error),
+                }
+                let metadata = fs::symlink_metadata(&current)?;
+                if !metadata.is_dir() || metadata_is_reparse_point(&metadata) {
+                    return Err(native_path_error(&current));
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn open_native_output(path: &Path) -> io::Result<File> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.is_file() || metadata_is_reparse_point(&metadata) {
+                return Err(native_path_error(path));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    let mut options = OpenOptions::new();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+
+    let file = options.open(path)?;
+    let opened = file.metadata()?;
+    if !opened.is_file() || metadata_is_reparse_point(&opened) || !same_native_file(path, &file)? {
+        return Err(native_path_error(path));
+    }
+    file.set_len(0)?;
+    Ok(file)
+}
+
+fn write_native_entry_with(
+    root: &Path,
+    relative: &Path,
+    entry: &mut impl Read,
+    after_open: impl FnOnce(),
+) -> io::Result<()> {
+    ensure_native_parents(root, relative)?;
+    let out = root.join(relative);
+    let mut file = open_native_output(&out)?;
+    // Recheck parents and the leaf after opening. Once this succeeds, the retained
+    // handle is the only destination used by the write, even if the path is swapped.
+    ensure_native_parents(root, relative)?;
+    if !same_native_file(&out, &file)? {
+        return Err(native_path_error(&out));
+    }
+    after_open();
+    io::copy(entry, &mut file)?;
+    Ok(())
+}
+
+fn write_native_entry(root: &Path, relative: &Path, entry: &mut impl Read) -> io::Result<()> {
+    write_native_entry_with(root, relative, entry, || {})
+}
+
 /// Unpacks this system's natives of an old version (a library's classifier) into `to`, without
 /// what the library's `extract.exclude` names (META-INF/). Versions since 1.19 have none.
 pub fn unpack_natives(
@@ -250,7 +444,7 @@ pub fn unpack_natives(
     os: &str,
     to: &Path,
 ) -> Result<(), String> {
-    fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    ensure_native_root(to).map_err(|error| format!("{}: {error}", to.display()))?;
     for library in version["libraries"].as_array().into_iter().flatten() {
         if !allowed(&library["rules"], os, &[]) {
             continue;
@@ -280,9 +474,8 @@ pub fn unpack_natives(
                 continue;
             }
             let out = to.join(&name);
-            fs::create_dir_all(out.parent().unwrap()).map_err(|e| e.to_string())?;
-            let mut file = fs::File::create(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-            std::io::copy(&mut entry, &mut file).map_err(|e| e.to_string())?;
+            write_native_entry(to, &name, &mut entry)
+                .map_err(|error| format!("{}: {error}", out.display()))?;
         }
     }
     Ok(())
