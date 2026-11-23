@@ -109,6 +109,75 @@ fn a_background_is_a_picture_kept_once() {
 }
 
 #[test]
+fn an_existing_background_with_different_bytes_is_not_overwritten() {
+    let root = std::env::temp_dir().join(format!(
+        "horizon-background-existing-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("data");
+    std::fs::create_dir_all(&dir).unwrap();
+    let picture = root.join("dusk.png");
+    image::RgbImage::new(160, 90).save(&picture).unwrap();
+    let name = keep_background(&dir, &picture).unwrap();
+    let kept = dir.join(&name);
+    std::fs::write(&kept, b"keep me").unwrap();
+
+    assert!(keep_background(&dir, &picture)
+        .unwrap_err()
+        .contains("different content"));
+    assert_eq!(std::fs::read(&kept).unwrap(), b"keep me");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn an_oversized_existing_background_is_rejected_before_reuse() {
+    let root = std::env::temp_dir().join(format!(
+        "horizon-background-oversized-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("data");
+    std::fs::create_dir_all(&dir).unwrap();
+    let picture = root.join("dusk.png");
+    image::RgbImage::new(160, 90).save(&picture).unwrap();
+    let name = keep_background(&dir, &picture).unwrap();
+    let kept = dir.join(&name);
+
+    let output = std::fs::OpenOptions::new().write(true).open(&kept).unwrap();
+    output.set_len(MAX_BYTES + 1).unwrap();
+    drop(output);
+
+    assert!(keep_background(&dir, &picture)
+        .unwrap_err()
+        .contains("over 40 MB"));
+    assert_eq!(std::fs::metadata(&kept).unwrap().len(), MAX_BYTES + 1);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_at_the_kept_name_is_not_overwritten() {
+    let root = std::env::temp_dir().join(format!("horizon-background-link-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("data");
+    std::fs::create_dir_all(&dir).unwrap();
+    let picture = root.join("dusk.png");
+    image::RgbImage::new(160, 90).save(&picture).unwrap();
+    let name = keep_background(&dir, &picture).unwrap();
+    std::fs::remove_file(dir.join(&name)).unwrap();
+
+    let victim = root.join("settings.json");
+    std::fs::write(&victim, b"keep me").unwrap();
+    std::os::unix::fs::symlink(&victim, dir.join(&name)).unwrap();
+    assert!(keep_background(&dir, &picture)
+        .unwrap_err()
+        .contains("symlink"));
+    assert_eq!(std::fs::read(&victim).unwrap(), b"keep me");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn a_picked_hue_is_any_degree_and_survives_settings_json() {
     assert_eq!(Accent::parse("blue"), Some(Accent::BLUE));
     assert_eq!(Accent::parse("217"), Some(Accent::custom(217.)));
