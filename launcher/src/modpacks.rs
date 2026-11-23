@@ -311,6 +311,14 @@ pub fn apply_profile(cmd: &mut Command, work: &Path) -> Result<(), String> {
     let home = profile_home(work);
     fs::create_dir_all(&home).map_err(|e| format!("{}: {e}", home.display()))?;
     let options = home.join("options.txt");
+    if let Ok(metadata) = options.symlink_metadata() {
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "{} is a link; refusing to seed options through it.",
+                options.display()
+            ));
+        }
+    }
     let own = backend::game_home().join("options.txt");
     if !options.exists() && own.is_file() {
         let _ = fs::copy(own, &options);
@@ -411,6 +419,34 @@ mod tests {
         assert!(profile_home(&work).is_dir());
         fs::remove_dir_all(&root).unwrap();
     }
+    #[test]
+    #[cfg(unix)]
+    fn a_profile_does_not_seed_options_through_a_link() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("horizon-pack-link-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let work = root.join("ports/link");
+        let carry = work.join("mods/a/carry");
+        fs::create_dir_all(&carry).unwrap();
+        fs::write(
+            carry.join("horizon-mod.toml"),
+            "id = 'a'\nname = 'a'\nversion = '1'\napi = '0.2'\n\ncapabilities = []\nnamespaces = []\n",
+        )
+        .unwrap();
+        let home = profile_home(&work);
+        fs::create_dir_all(&home).unwrap();
+        let victim = root.join("victim.txt");
+        fs::write(&victim, b"keep").unwrap();
+        symlink(&victim, home.join("options.txt")).unwrap();
+
+        let mut cmd = Command::new("true");
+        let err = apply_profile(&mut cmd, &work).unwrap_err();
+        assert!(err.contains("link"), "{err}");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn resource_only_profile_can_play_without_enabling_or_overwriting_packs() {
         let root = std::env::temp_dir().join(format!(
