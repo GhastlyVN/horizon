@@ -615,7 +615,14 @@ fn copy_home(from: &Path, to: &Path) -> std::io::Result<()> {
             continue;
         }
         let path = entry.path();
-        if entry.file_type()?.is_dir() {
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{} is a symlink", path.display()),
+            ));
+        }
+        if kind.is_dir() {
             copy_dir(&path, &to.join(&name))?;
         } else {
             fs::copy(&path, to.join(&name))?;
@@ -629,7 +636,14 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{} is a symlink", entry.path().display()),
+            ));
+        }
+        if kind.is_dir() {
             copy_dir(&entry.path(), &target)?;
         } else {
             fs::copy(entry.path(), target)?;
