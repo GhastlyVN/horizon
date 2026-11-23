@@ -407,6 +407,14 @@ enum WorldsCmd {
         #[arg(long)]
         instance: Option<String>,
     },
+    /// Print a world's folder, for scripts and file managers
+    Path {
+        /// Its folder or name
+        world: String,
+        /// The instance (default: the selected one)
+        #[arg(long)]
+        instance: Option<String>,
+    },
     /// Zip a world into the instance's backups/ folder, as the game's Make Backup does
     Backup {
         /// Its folder or name
@@ -3558,6 +3566,14 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
                     "{} ({})\n    {}, {version}, {mb:.1} MB",
                     w.name, w.folder, w.mode
                 );
+            }
+        }
+        WorldsCmd::Path { world, instance } => {
+            let w = worlds::find(&home(instance)?, &world)?;
+            if as_json {
+                json(value(&w));
+            } else {
+                println!("{}", w.path.display());
             }
         }
         WorldsCmd::Backup { world, instance } => {

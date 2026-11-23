@@ -586,6 +586,17 @@ The worlds: name, mode, version, last played and size (the default).
 
 MCP: `worlds_list`.
 
+## `horizon-launcher worlds path`
+
+Print a world's folder, for scripts and file managers.
+
+    horizon-launcher worlds path <WORLD>
+
+- `WORLD`: Its folder or name
+- `--instance`: The instance (default: the selected one)
+
+MCP: `worlds_path`.
+
 ## `horizon-launcher worlds backup`
 
 Zip a world into the instance's backups/ folder, as the game's Make Backup does.
