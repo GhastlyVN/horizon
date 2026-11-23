@@ -296,6 +296,14 @@ fn finish(
     program: &[u8],
     record: &serde_json::Value,
 ) -> std::io::Result<()> {
+    if let Ok(meta) = fs::symlink_metadata(dir) {
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("{}: not a real directory", dir.display()),
+            ));
+        }
+    }
     fs::write(partial.join(CLIENT), program)?;
     #[cfg(unix)]
     {
@@ -367,6 +375,31 @@ mod tests {
             b"\x7fELF"
         };
         [magic, body, &horizon_mods::api_level::MARK[..]].concat()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn finish_refuses_a_linked_version_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = dir("linked-version");
+        let partial = root.join("partial");
+        let versions = root.join("versions");
+        let victim = root.join("outside");
+        fs::create_dir_all(&partial).unwrap();
+        fs::create_dir_all(&versions).unwrap();
+        fs::create_dir_all(&victim).unwrap();
+        let linked = versions.join("imported-2026-11-22-abcdef0");
+        symlink(&victim, &linked).unwrap();
+
+        let record = serde_json::json!({});
+        let err = finish(&partial, &linked, &program(b"body"), &record).unwrap_err();
+        assert!(err.to_string().contains("not a real directory"), "{err}");
+        assert!(fs::read_dir(&victim).unwrap().next().is_none());
+        assert!(fs::symlink_metadata(&linked)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]
