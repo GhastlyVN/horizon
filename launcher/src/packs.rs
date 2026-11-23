@@ -323,7 +323,7 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
             1 => dir.join(name),
             n => dir.join(format!("{stem} ({n}){ext}")),
         })
-        .find(|p| !p.exists())
+        .find(|p| fs::symlink_metadata(p).is_err())
         .unwrap();
     fs::copy(file, &target).map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
     read(&target, kind, &[])

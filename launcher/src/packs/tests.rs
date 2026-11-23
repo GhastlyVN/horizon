@@ -147,6 +147,29 @@ fn turning_packs_on_and_off_writes_the_games_own_lines() {
 }
 
 #[test]
+#[cfg(unix)]
+fn adding_a_pack_does_not_write_through_a_dangling_link() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("add-link");
+    let home = root.join("home");
+    let source = root.join("Glass.zip");
+    zip_file(&source, &[("pack.mcmeta", META)]);
+    fs::create_dir_all(home.join("resourcepacks")).unwrap();
+    let victim = root.join("victim.zip");
+    symlink(&victim, home.join("resourcepacks/Glass.zip")).unwrap();
+
+    let added = add(&home, &source).unwrap();
+    assert_eq!(added.file, "Glass (2).zip");
+    assert!(!victim.exists());
+    assert_eq!(
+        fs::read(home.join("resourcepacks/Glass (2).zip")).unwrap(),
+        fs::read(&source).unwrap()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_dropped_file_goes_to_its_folder_under_a_free_name() {
     let home = home("add");
     let drops = scratch("drops");
