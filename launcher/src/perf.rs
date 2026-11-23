@@ -77,10 +77,7 @@ fn write_report_with(path: &Path, bytes: &[u8], before_publish: impl FnOnce()) {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     for _ in 0..8 {
         let id = REPORT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-        let temporary = parent.join(format!(
-            ".{name}.{}.{id}.tmp",
-            std::process::id()
-        ));
+        let temporary = parent.join(format!(".{name}.{}.{id}.tmp", std::process::id()));
         let Ok(mut file) = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -109,11 +106,7 @@ fn write_bench_result(path: &Path, bytes: &[u8]) -> bool {
     write_bench_result_with(path, bytes, || {})
 }
 
-fn write_bench_result_with(
-    path: &Path,
-    bytes: &[u8],
-    after_open: impl FnOnce(),
-) -> bool {
+fn write_bench_result_with(path: &Path, bytes: &[u8], after_open: impl FnOnce()) -> bool {
     let Ok(mut file) = OpenOptions::new().write(true).create_new(true).open(path) else {
         return false;
     };
