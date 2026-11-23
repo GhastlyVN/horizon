@@ -207,3 +207,24 @@ fn an_export_comes_back_as_an_instance_and_nothing_escapes_its_folder() {
     assert!(import_into(&java, NONE, &maker(&made)).is_err());
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+#[cfg(unix)]
+fn an_import_does_not_write_through_a_dangling_link() {
+    use std::os::unix::fs::symlink;
+
+    let dir = scratch("import-link");
+    let made = dir.join("instances");
+    let archive = dir.join("link.zip");
+    zip_file(&archive, &[("options.txt", b"lang:fr_ch\n")]);
+    let instance = maker(&made)("Linked").unwrap();
+    let home = instance.home.clone();
+    let victim = dir.join("victim.txt");
+    symlink(&victim, home.join("options.txt")).unwrap();
+
+    let err = import_into(&archive, NONE, &|_| Ok(instance.clone())).unwrap_err();
+    assert!(err.contains("options.txt"), "{err}");
+    assert!(!victim.exists());
+    assert!(!home.exists());
+    fs::remove_dir_all(&dir).unwrap();
+}

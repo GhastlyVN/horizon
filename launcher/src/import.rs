@@ -196,6 +196,12 @@ fn fill(
         let Some(to) = target(home, &relative) else {
             continue;
         };
+        if to.symlink_metadata().is_ok() {
+            return Err(format!(
+                "{} is a link; refusing to import through it.",
+                to.display()
+            ));
+        }
         fs::create_dir_all(to.parent().expect("inside home")).map_err(|e| e.to_string())?;
         let mut out = fs::File::create(&to).map_err(|e| format!("{}: {e}", to.display()))?;
         std::io::copy(&mut entry, &mut out).map_err(|e| format!("{}: {e}", to.display()))?;
