@@ -493,6 +493,7 @@ fn linked_native_extraction_parent_is_refused() {
     let minecraft = scratch("native-parent-link");
     let natives = scratch("native-parent-link-out");
     let outside = scratch("native-parent-link-victim");
+    fs::create_dir_all(&natives).unwrap();
     let jar = under(&minecraft, "libraries/org/test/native/native.jar");
     fs::create_dir_all(jar.parent().unwrap()).unwrap();
     {
@@ -534,6 +535,7 @@ fn native_extraction_writes_through_its_open_handle_after_path_swap() {
     use std::os::unix::fs::symlink;
 
     let root = scratch("native-open-handle");
+    fs::create_dir_all(&root).unwrap();
     let victim = root.join("outside.so");
     let output = root.join("libnative.so");
     let moved = root.join("opened-native.so");

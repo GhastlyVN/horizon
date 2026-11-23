@@ -268,38 +268,66 @@ fn metadata_is_reparse_point(metadata: &Metadata) -> bool {
     }
 }
 
-fn same_native_file(left: &Metadata, right: &Metadata) -> bool {
+#[cfg(windows)]
+fn windows_file_identity(file: &File) -> io::Result<(u32, u32, u32)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    let succeeded = unsafe {
+        GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr())
+    };
+    if succeeded == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let information = unsafe { information.assume_init() };
+    Ok((
+        information.dwVolumeSerialNumber,
+        information.nFileIndexHigh,
+        information.nFileIndexLow,
+    ))
+}
+
+fn same_native_file(path: &Path, file: &File) -> io::Result<bool> {
+    let path_metadata = fs::symlink_metadata(path)?;
+    let opened = file.metadata()?;
+    if !path_metadata.is_file()
+        || metadata_is_reparse_point(&path_metadata)
+        || !opened.is_file()
+        || metadata_is_reparse_point(&opened)
+    {
+        return Ok(false);
+    }
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        left.dev() == right.dev() && left.ino() == right.ino()
+        Ok(path_metadata.dev() == opened.dev() && path_metadata.ino() == opened.ino())
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        match (
-            left.volume_serial_number(),
-            left.file_index(),
-            right.volume_serial_number(),
-            right.file_index(),
-        ) {
-            (Some(left_volume), Some(left_index), Some(right_volume), Some(right_index)) => {
-                left_volume == right_volume && left_index == right_index
-            }
-            _ => left.len() == right.len() && left.modified().ok() == right.modified().ok(),
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
+        options.write(true).custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        let current = options.open(path)?;
+        let current_metadata = current.metadata()?;
+        if !current_metadata.is_file() || metadata_is_reparse_point(&current_metadata) {
+            return Ok(false);
         }
+        Ok(windows_file_identity(&current)? == windows_file_identity(file)?)
     }
     #[cfg(not(any(unix, windows)))]
     {
-        left.len() == right.len() && left.modified().ok() == right.modified().ok()
+        Ok(path_metadata.len() == opened.len()
+            && path_metadata.modified().ok() == opened.modified().ok())
     }
 }
 
 fn ensure_native_root(root: &Path) -> io::Result<()> {
     match fs::symlink_metadata(root) {
-        Ok(metadata)
-            if metadata.is_dir() && !metadata_is_reparse_point(&metadata) =>
-        {
+        Ok(metadata) if metadata.is_dir() && !metadata_is_reparse_point(&metadata) => {
             Ok(())
         }
         Ok(_) => Err(native_path_error(root)),
@@ -324,9 +352,7 @@ fn ensure_native_parents(root: &Path, relative: &Path) -> io::Result<()> {
         };
         current.push(name);
         match fs::symlink_metadata(&current) {
-            Ok(metadata)
-                if metadata.is_dir() && !metadata_is_reparse_point(&metadata) =>
-            {
+            Ok(metadata) if metadata.is_dir() && !metadata_is_reparse_point(&metadata) => {
                 continue;
             }
             Ok(_) => return Err(native_path_error(&current)),
@@ -348,16 +374,15 @@ fn ensure_native_parents(root: &Path, relative: &Path) -> io::Result<()> {
 }
 
 fn open_native_output(path: &Path) -> io::Result<File> {
-    let before = match fs::symlink_metadata(path) {
+    match fs::symlink_metadata(path) {
         Ok(metadata) => {
             if !metadata.is_file() || metadata_is_reparse_point(&metadata) {
                 return Err(native_path_error(path));
             }
-            Some(metadata)
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
-    };
+    }
 
     let mut options = OpenOptions::new();
     options.write(true).create(true);
@@ -369,25 +394,14 @@ fn open_native_output(path: &Path) -> io::Result<File> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(
-            windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT,
-        );
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
     }
 
-    let mut file = options.open(path)?;
+    let file = options.open(path)?;
     let opened = file.metadata()?;
     if !opened.is_file()
         || metadata_is_reparse_point(&opened)
-        || before
-            .as_ref()
-            .is_some_and(|metadata| !same_native_file(metadata, &opened))
-    {
-        return Err(native_path_error(path));
-    }
-    let after_open = fs::symlink_metadata(path)?;
-    if !after_open.is_file()
-        || metadata_is_reparse_point(&after_open)
-        || !same_native_file(&after_open, &opened)
+        || !same_native_file(path, &file)?
     {
         return Err(native_path_error(path));
     }
@@ -407,12 +421,7 @@ fn write_native_entry_with(
     // Recheck parents and the leaf after opening. Once this succeeds, the retained
     // handle is the only destination used by the write, even if the path is swapped.
     ensure_native_parents(root, relative)?;
-    let opened = file.metadata()?;
-    let path_after = fs::symlink_metadata(&out)?;
-    if !path_after.is_file()
-        || metadata_is_reparse_point(&path_after)
-        || !same_native_file(&path_after, &opened)
-    {
+    if !same_native_file(&out, &file)? {
         return Err(native_path_error(&out));
     }
     after_open();
