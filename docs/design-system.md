@@ -98,7 +98,11 @@ Geist (400, 500, 600) and Geist Mono (400), bundled under the SIL Open Font Lice
 | `enter` | 600 ms   | `cubic-bezier(.23, 1, .32, 1)`  | content arriving: opacity 0→1, rise 8 px |
 | `stagger` | 40 ms  |                                 | delay between list rows arriving |
 
-`prefers-reduced-motion` (web) turns `enter` into a plain fade.
+`prefers-reduced-motion` (web) turns `enter` into a plain fade. The launcher asks the same
+of the system on macOS and draws everything at its end when the player prefers less motion. On
+other systems, set `HORIZON_LAUNCHER_MOTION=off` (or `reduced`) to stop motion, `full` to play it
+while the window is in front, or `always` to play it even in the background (for recordings). The
+setting is read once when the launcher starts.
 
 ## Components
 
