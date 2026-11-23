@@ -407,3 +407,36 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
     let _ = fs::remove_dir_all(home);
     let _ = fs::remove_dir_all(source);
 }
+
+#[test]
+#[cfg(unix)]
+fn installing_refuses_a_linked_installed_bundle() {
+    use std::os::unix::fs::symlink;
+
+    let home = tree("install-link");
+    let source = tree("install-link-src");
+    write(&source.join("horizon-mixin.toml"), &mixin("zoom", true));
+    let bytes = pack(&find_mods(&source).unwrap()[0]).unwrap();
+    let ready = checked(&bytes, &source.join("out")).unwrap();
+    let found = Resolved {
+        owner: "acme".into(),
+        repo: "zoom".into(),
+        tag: None,
+        commit: SHA.into(),
+        asset: None,
+        content_only: None,
+    };
+    install(&home, &found, &ready).unwrap();
+    let victim = source.join("victim.hnmod");
+    fs::write(&victim, b"keep").unwrap();
+    let target = home.join(INSTALLED).join("zoom.hnmod");
+    fs::remove_file(&target).unwrap();
+    symlink(&victim, &target).unwrap();
+    let bytes2 = pack(&find_mods(&source).unwrap()[0]).unwrap();
+    let ready2 = checked(&bytes2, &source.join("out2")).unwrap();
+    let err = install(&home, &found, &ready2).unwrap_err();
+    assert!(err.contains("not a regular file"), "{err}");
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    let _ = fs::remove_dir_all(home);
+    let _ = fs::remove_dir_all(source);
+}
