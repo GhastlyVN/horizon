@@ -158,10 +158,18 @@ fn session_skin(
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    if std::fs::create_dir_all(cache).is_ok() {
-        let _ = std::fs::write(&file, &url);
-    }
+    write_cache(&file, url.as_bytes());
     (!url.is_empty()).then_some(url)
+}
+
+/// Keeps a downloaded head in the cache, never writing through a link left there.
+fn write_cache(path: &Path, bytes: &[u8]) {
+    if std::fs::symlink_metadata(path).is_ok_and(|m| !m.file_type().is_file()) {
+        return;
+    }
+    if std::fs::create_dir_all(path.parent().unwrap_or(Path::new("."))).is_ok() {
+        let _ = std::fs::write(path, bytes);
+    }
 }
 
 fn profile_face_with(
@@ -195,9 +203,7 @@ fn profile_face_with(
             }
             if let Some(png) = fetch(url) {
                 if let Some(face) = profile_pixels(&png) {
-                    if std::fs::create_dir_all(cache).is_ok() {
-                        let _ = std::fs::write(file, png);
-                    }
+                    write_cache(&file, &png);
                     return Some(face);
                 }
             }
@@ -218,9 +224,7 @@ fn profile_face_with(
             }
             if let Some(png) = fetch(&ely_url) {
                 if let Some(face) = profile_pixels(&png) {
-                    if std::fs::create_dir_all(cache).is_ok() {
-                        let _ = std::fs::write(&file, png);
-                    }
+                    write_cache(&file, &png);
                     return Some(face);
                 }
             }
@@ -241,9 +245,7 @@ fn profile_face_with(
                     }
                     if let Some(png) = fetch(&storage_url) {
                         if let Some(face) = profile_pixels(&png) {
-                            if std::fs::create_dir_all(cache).is_ok() {
-                                let _ = std::fs::write(storage_file, png);
-                            }
+                            write_cache(&storage_file, &png);
                             return Some(face);
                         }
                     }
@@ -347,6 +349,48 @@ mod tests {
             )
             .unwrap();
         assert!(profile_pixels(&oversized).is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_linked_head_cache_file_is_not_written_through() {
+        use sha1::{Digest, Sha1};
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!(
+            "hz-head-link-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut skin = image::RgbaImage::new(64, 64);
+        skin.put_pixel(8, 8, image::Rgba([12, 34, 56, 255]));
+        let mut png = Vec::new();
+        skin.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let url = "https://textures.minecraft.net/texture/abc";
+        let account = crate::account::Account {
+            name: "TestPlayer".into(),
+            uuid: "00000000000000000000000000000000".into(),
+            skin: Some((url.into(), "classic".into())),
+            cape: None,
+        };
+        let file = dir.join(format!("{:x}.png", Sha1::digest(url.as_bytes())));
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("outside.png");
+        std::fs::write(&victim, b"keep").unwrap();
+        symlink(&victim, &file).unwrap();
+
+        let head = profile_face_with(&account, &dir, &dir, &|_| Some(png.clone())).unwrap();
+        assert_eq!(head[0], [12, 34, 56, 255]);
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert!(std::fs::symlink_metadata(&file)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
