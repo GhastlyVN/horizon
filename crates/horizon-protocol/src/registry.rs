@@ -101,11 +101,13 @@ impl Builtin {
                     .as_u64()
                     .ok_or_else(|| Error::new(format!("{entry}: no protocol_id")))?;
                 let id = usize::try_from(id).map_err(|_| {
-                    Error::new(format!("{entry}: protocol_id {id} does not fit this platform"))
+                    Error::new(format!(
+                        "{entry}: protocol_id {id} does not fit this platform"
+                    ))
                 })?;
-                let required_slots = id.checked_add(1).ok_or_else(|| {
-                    Error::new(format!("{entry}: protocol_id {id} is too large"))
-                })?;
+                let required_slots = id
+                    .checked_add(1)
+                    .ok_or_else(|| Error::new(format!("{entry}: protocol_id {id} is too large")))?;
                 if required_slots > MAX_BUILTIN_REGISTRY_SLOTS {
                     return Err(Error::new(format!(
                         "{entry}: protocol_id {id} exceeds the registry slot limit ({MAX_BUILTIN_REGISTRY_SLOTS})"
@@ -126,7 +128,9 @@ impl Builtin {
 
             let mut names = Vec::new();
             names.try_reserve_exact(slot_count).map_err(|error| {
-                Error::new(format!("{name}: could not allocate registry name table: {error}"))
+                Error::new(format!(
+                    "{name}: could not allocate registry name table: {error}"
+                ))
             })?;
             names.resize(slot_count, String::new());
             for (id, entry) in indexed {
