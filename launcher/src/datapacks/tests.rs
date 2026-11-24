@@ -144,7 +144,10 @@ fn datapack_operations_refuse_a_symlinked_world_root() {
     let old_pack = real_world.join("datapacks/Old.zip");
     zip_file(
         &old_pack,
-        &[("pack.mcmeta", META), ("data/t/function/a.mcfunction", "say hi")],
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say hi"),
+        ],
     );
     let world_alias = root.join("world");
     symlink(&real_world, &world_alias).unwrap();
@@ -152,32 +155,32 @@ fn datapack_operations_refuse_a_symlinked_world_root() {
     let source = root.join("New.zip");
     zip_file(
         &source,
-        &[("pack.mcmeta", META), ("data/t/function/b.mcfunction", "say bye")],
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/b.mcfunction", "say bye"),
+        ],
     );
 
     assert!(list(&world_alias).is_empty());
-    assert!(
-        add(&world_alias, &source)
-            .unwrap_err()
-            .contains("real world directory")
-    );
-    assert!(
-        forget(&world_alias, "Old.zip")
-            .unwrap_err()
-            .contains("real world directory")
-    );
+    assert!(add(&world_alias, &source)
+        .unwrap_err()
+        .contains("real world directory"));
+    assert!(forget(&world_alias, "Old.zip")
+        .unwrap_err()
+        .contains("real world directory"));
     let pack = DataPack {
         file: "Old.zip".into(),
         path: old_pack.clone(),
         description: String::new(),
         enabled: false,
     };
-    assert!(
-        remove(&world_alias, &pack)
-            .unwrap_err()
-            .contains("real world directory")
+    assert!(remove(&world_alias, &pack)
+        .unwrap_err()
+        .contains("real world directory"));
+    assert_eq!(
+        fs::read_to_string(real_world.join(SETTINGS)).unwrap(),
+        original
     );
-    assert_eq!(fs::read_to_string(real_world.join(SETTINGS)).unwrap(), original);
     assert!(old_pack.is_file());
     assert!(!real_world.join("datapacks/New.zip").exists());
 
