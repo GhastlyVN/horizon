@@ -559,7 +559,8 @@ mod tests {
 
     #[test]
     fn restore_rolls_back_the_previous_world_if_install_fails() {
-        let dir = std::env::temp_dir().join(format!("horizon-server-rollback-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("horizon-server-rollback-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let previous = dir.join("backups/replaced/world");
         let current = dir.join("world");
