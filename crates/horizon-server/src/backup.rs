@@ -269,16 +269,28 @@ pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf
         Ok(moved)
     })();
 
-    match (result, std::fs::remove_dir_all(&scratch)) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Ok(_), Err(error)) if error.kind() == std::io::ErrorKind::NotFound => result,
-        (Ok(_), Err(error)) => Err(format!(
-            "backup restore completed, but temporary extraction cleanup failed: {error}"
-        )),
-        (Err(error), Err(cleanup)) if cleanup.kind() != std::io::ErrorKind::NotFound => {
-            Err(format!("{error}; temporary extraction cleanup failed: {cleanup}"))
+    let cleanup = std::fs::remove_dir_all(&scratch);
+    match result {
+        Ok(value) => {
+            if let Err(error) = cleanup {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(format!(
+                        "backup restore completed, but temporary extraction cleanup failed: {error}"
+                    ));
+                }
+            }
+            Ok(value)
         }
-        (Err(error), _) => Err(error),
+        Err(error) => {
+            if let Err(cleanup) = cleanup {
+                if cleanup.kind() != std::io::ErrorKind::NotFound {
+                    return Err(format!(
+                        "{error}; temporary extraction cleanup failed: {cleanup}"
+                    ));
+                }
+            }
+            Err(error)
+        }
     }
 }
 
