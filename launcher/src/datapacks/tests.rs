@@ -187,6 +187,79 @@ fn datapack_operations_refuse_a_symlinked_world_root() {
     fs::remove_dir_all(root).unwrap();
 }
 
+
+#[test]
+#[cfg(unix)]
+fn datapack_operations_refuse_a_symlinked_datapacks_directory() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("datapacks-directory-link");
+    let world = root.join("world");
+    let outside = root.join("outside");
+    fs::create_dir_all(&world).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let old_pack = outside.join("Old.zip");
+    zip_file(
+        &old_pack,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say hi"),
+        ],
+    );
+    symlink(&outside, world.join("datapacks")).unwrap();
+
+    let source = root.join("New.zip");
+    zip_file(
+        &source,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/b.mcfunction", "say bye"),
+        ],
+    );
+    let forged_pack = DataPack {
+        file: "Old.zip".into(),
+        path: world.join("datapacks/Old.zip"),
+        description: String::new(),
+        enabled: true,
+    };
+
+    assert!(list(&world).is_empty());
+    assert!(add(&world, &source)
+        .unwrap_err()
+        .contains("Datapacks directory"));
+    assert!(remove(&world, &forged_pack)
+        .unwrap_err()
+        .contains("Datapacks directory"));
+    assert!(old_pack.is_file());
+    assert!(!outside.join("New.zip").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn datapack_list_ignores_symlink_entries() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("datapack-entry-link");
+    let world = root.join("world");
+    let dir = world.join("datapacks");
+    fs::create_dir_all(&dir).unwrap();
+    let outside = root.join("Outside.zip");
+    zip_file(
+        &outside,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say hi"),
+        ],
+    );
+    symlink(&outside, dir.join("Linked.zip")).unwrap();
+
+    assert!(list(&world).is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+
 #[test]
 fn coverage_says_what_runs() {
     let root = scratch("coverage");

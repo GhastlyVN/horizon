@@ -35,6 +35,39 @@ fn refuse_world_link(world: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+
+fn refuse_directory_link(path: &Path, missing_ok: bool) -> std::io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if is_link_or_reparse_point(&metadata) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "{} is a link or reparse point; refusing to follow it.",
+                path.display()
+            ),
+        )),
+        Ok(metadata) if !metadata.is_dir() => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is not a directory.", path.display()),
+        )),
+        Ok(_) => Ok(()),
+        Err(error) if missing_ok && error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn ensure_pack_directory(world: &Path) -> Result<PathBuf, String> {
+    let dir = world.join("datapacks");
+    match fs::symlink_metadata(&dir) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        }
+        Err(error) => return Err(format!("{}: {error}", dir.display())),
+    }
+    refuse_directory_link(&dir, false).map_err(|error| format!("Datapacks directory: {error}"))?;
+    Ok(dir)
+}
+
 fn refuse_link(path: &Path) -> std::io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if is_link_or_reparse_point(&metadata) => Err(std::io::Error::new(
@@ -89,16 +122,24 @@ pub fn list(world: &Path) -> Vec<DataPack> {
     if refuse_world_link(world).is_err() {
         return Vec::new();
     }
+    let dir = world.join("datapacks");
+    if refuse_directory_link(&dir, true).is_err() {
+        return Vec::new();
+    }
     let off = disabled(&settings(world));
-    let mut packs: Vec<DataPack> = fs::read_dir(world.join("datapacks"))
+    let mut packs: Vec<DataPack> = fs::read_dir(&dir)
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|e| {
             let path = e.path();
+            let metadata = fs::symlink_metadata(&path).ok()?;
+            if is_link_or_reparse_point(&metadata) {
+                return None;
+            }
             let file = e.file_name().to_str()?.to_string();
-            let zip = path.is_file() && file.to_ascii_lowercase().ends_with(".zip");
-            if !(zip || path.is_dir()) {
+            let zip = metadata.is_file() && file.to_ascii_lowercase().ends_with(".zip");
+            if !(zip || metadata.is_dir()) {
                 return None;
             }
             let meta: serde_json::Value =
@@ -145,8 +186,7 @@ fn check(file: &Path) -> Result<(), String> {
 pub fn add(world: &Path, file: &Path) -> Result<DataPack, String> {
     refuse_world_link(world).map_err(|e| format!("World directory: {e}"))?;
     check(file)?;
-    let dir = world.join("datapacks");
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let dir = ensure_pack_directory(world)?;
     let name = file.file_name().ok_or("A pack file has a name")?;
     let stem = Path::new(name)
         .file_stem()
@@ -207,6 +247,20 @@ pub fn find(world: &Path, query: &str) -> Result<DataPack, String> {
 /// Moves the data pack to the system's trash and forgets it in `datapacks.json`.
 pub fn remove(world: &Path, pack: &DataPack) -> Result<(), String> {
     refuse_world_link(world).map_err(|e| format!("World directory: {e}"))?;
+    let dir = world.join("datapacks");
+    refuse_directory_link(&dir, false)
+        .map_err(|e| format!("Datapacks directory: {e}"))?;
+    if pack.path.parent() != Some(dir.as_path()) {
+        return Err("Pack path is outside this world's datapacks directory.".into());
+    }
+    let metadata = fs::symlink_metadata(&pack.path)
+        .map_err(|e| format!("{}: {e}", pack.path.display()))?;
+    if is_link_or_reparse_point(&metadata) || !(metadata.is_file() || metadata.is_dir()) {
+        return Err(format!(
+            "{} is not a regular pack file or directory.",
+            pack.path.display()
+        ));
+    }
     crate::desktop_seams::to_trash(&pack.path)
         .map_err(|e| format!("Could not move {} to the trash: {e}", pack.file))?;
     forget(world, &pack.file)
