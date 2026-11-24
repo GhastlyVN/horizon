@@ -36,6 +36,9 @@ fn is_zero(n: &usize) -> bool {
 /// overrides of packs that ship it, such as All the Mods 10).
 pub const MODLIST: &str = "config/crash_assistant/modlist.json";
 
+/// Modpack metadata is JSON, never large; a highly compressible file must not exhaust memory.
+const MAX_METADATA: u64 = 16 << 20;
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct PackFile {
     /// Path in the instance (`mods/create-1.21.1-6.0.4.jar`).
@@ -84,7 +87,8 @@ pub fn import(path: &Path) -> Result<Pack, String> {
         return instance(path);
     }
     if path.extension().is_some_and(|e| e == "json") {
-        let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let text = read_bounded_json_text(&mut file, &path.display().to_string())?;
         let list: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
             .map_err(|e| format!("{}: {e}", path.display()))?;
         return modlist(&list);
@@ -119,14 +123,23 @@ fn names(zip: &zip::ZipArchive<fs::File>) -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
+fn read_bounded_json_text(reader: impl Read, label: &str) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take(MAX_METADATA + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{label}: {e}"))?;
+    if bytes.len() as u64 > MAX_METADATA {
+        return Err(format!("{label} exceeds 16 MiB"));
+    }
+    String::from_utf8(bytes).map_err(|e| format!("{label}: {e}"))
+}
+
 fn read_json(zip: &mut zip::ZipArchive<fs::File>, name: &str) -> Result<Option<Value>, String> {
     let Ok(mut entry) = zip.by_name(name) else {
         return Ok(None);
     };
-    let mut text = String::new();
-    entry
-        .read_to_string(&mut text)
-        .map_err(|e| format!("{name}: {e}"))?;
+    let text = read_bounded_json_text(&mut entry, name)?;
     serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map(Some)
         .map_err(|e| format!("{name}: {e}"))
@@ -285,7 +298,8 @@ fn instance(dir: &Path) -> Result<Pack, String> {
         format: "instance".into(),
         ..Pack::default()
     };
-    if let Ok(text) = fs::read_to_string(dir.join("mmc-pack.json")) {
+    if let Ok(mut file) = fs::File::open(dir.join("mmc-pack.json")) {
+        let text = read_bounded_json_text(&mut file, "mmc-pack.json")?;
         let mmc: Value = serde_json::from_str(&text).map_err(|e| format!("mmc-pack.json: {e}"))?;
         for c in mmc["components"].as_array().into_iter().flatten() {
             let version = str_of(c, "version");
