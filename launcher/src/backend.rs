@@ -893,7 +893,9 @@ fn checked_download_total(done: u64, chunk: usize, limit: u64) -> Result<u64, St
         .checked_add(chunk as u64)
         .ok_or_else(|| "Download exceeded the size limit".to_string())?;
     if next > limit {
-        return Err(format!("Download exceeded its expected size ({limit} bytes)"));
+        return Err(format!(
+            "Download exceeded its expected size ({limit} bytes)"
+        ));
     }
     Ok(next)
 }
