@@ -953,7 +953,8 @@ pub(crate) fn download(
     file.seek(SeekFrom::Start(0)).map_err(|e| {
         let _ = fs::remove_file(to);
         e.to_string()
-    })
+    })?;
+    Ok(file)
 }
 
 fn unpack(archive: fs::File, url: &str, to: &Path) -> Result<(), String> {
