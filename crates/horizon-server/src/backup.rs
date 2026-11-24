@@ -198,13 +198,16 @@ fn put_restored_path_in_place(
     description: &str,
 ) -> Result<(), String> {
     if let Err(error) = std::fs::rename(restored, current) {
-        if let Some(previous) = moved {
-            if let Err(rollback) = std::fs::rename(previous, current) {
-                return Err(format!(
-                    "{description}: {error}; rollback failed: {rollback}; previous world remains at {}",
-                    previous.display()
-                ));
+        match moved {
+            Some(previous) => {
+                if let Err(rollback) = std::fs::rename(previous, current) {
+                    return Err(format!(
+                        "{description}: {error}; rollback failed: {rollback}; previous world remains at {}",
+                        previous.display()
+                    ));
+                }
             }
+            None => {}
         }
         return Err(format!("{description}: {error}"));
     }
@@ -272,22 +275,24 @@ pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf
     let cleanup = std::fs::remove_dir_all(&scratch);
     match result {
         Ok(value) => {
-            if let Err(error) = cleanup {
-                if error.kind() != std::io::ErrorKind::NotFound {
+            match cleanup {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                     return Err(format!(
                         "backup restore completed, but temporary extraction cleanup failed: {error}"
                     ));
                 }
+                _ => {}
             }
             Ok(value)
         }
         Err(error) => {
-            if let Err(cleanup) = cleanup {
-                if cleanup.kind() != std::io::ErrorKind::NotFound {
+            match cleanup {
+                Err(cleanup) if cleanup.kind() != std::io::ErrorKind::NotFound => {
                     return Err(format!(
                         "{error}; temporary extraction cleanup failed: {cleanup}"
                     ));
                 }
+                _ => {}
             }
             Err(error)
         }
