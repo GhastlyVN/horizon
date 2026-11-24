@@ -398,3 +398,38 @@ fn entries_of(bytes: &[u8]) -> Vec<Tag> {
         other => panic!("no servers list: {other:?}"),
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn saving_a_server_list_refuses_linked_temporary_files() {
+    use std::os::unix::fs::symlink;
+
+    let home = scratch("save-link");
+    let victim = home.join("victim.txt");
+    fs::write(&victim, b"keep").unwrap();
+    symlink(&victim, home.join("servers.dat_new")).unwrap();
+
+    let list = List {
+        entries: Vec::new(),
+    };
+    let err = list.save(&home).unwrap_err();
+    assert!(err.contains("link"), "{err}");
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn adding_the_official_server_refuses_a_linked_marker() {
+    use std::os::unix::fs::symlink;
+
+    let home = scratch("marker-link");
+    let victim = home.join("victim.txt");
+    fs::write(&victim, b"keep").unwrap();
+    symlink(&victim, home.join(OFFICIAL_MARKER)).unwrap();
+
+    let err = add_official(&home, "example.org:25565", &[]).unwrap_err();
+    assert!(err.contains("link"), "{err}");
+    assert_eq!(fs::read(&victim).unwrap(), b"keep");
+    fs::remove_dir_all(&home).unwrap();
+}
