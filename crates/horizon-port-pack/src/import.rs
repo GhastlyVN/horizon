@@ -505,7 +505,8 @@ mod tests {
         let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
         let opts = zip::write::SimpleFileOptions::default();
         zip.start_file("modrinth.index.json", opts).unwrap();
-        zip.write_all(&vec![b' '; (MAX_METADATA + 1) as usize]).unwrap();
+        zip.write_all(&vec![b' '; (MAX_METADATA + 1) as usize])
+            .unwrap();
         zip.finish().unwrap();
         let err = import(&path).unwrap_err();
         assert!(err.contains("exceeds 16 MiB"), "{err}");
