@@ -602,7 +602,10 @@ fn tail_lines(path: &Path, count: usize, max_bytes: u64) -> Result<Vec<String>, 
         lines.remove(0);
     }
     let from = lines.len().saturating_sub(count);
-    Ok(lines[from..].iter().map(|line| (*line).to_owned()).collect())
+    Ok(lines[from..]
+        .iter()
+        .map(|line| (*line).to_owned())
+        .collect())
 }
 /// `logs [-f] [-n N]`: the last lines, from the running server or else from logs/latest.log.
 pub fn logs(dir: &Path, follow: bool, count: usize) -> Result<(), String> {
@@ -654,7 +657,10 @@ mod tests {
         }
         text.push_str("final one\nfinal two\n");
         std::fs::write(&path, text).unwrap();
-        assert_eq!(tail_lines(&path, 2, 64).unwrap(), vec!["final one", "final two"]);
+        assert_eq!(
+            tail_lines(&path, 2, 64).unwrap(),
+            vec!["final one", "final two"]
+        );
         assert_eq!(tail_lines(&path, 2, 20).unwrap(), vec!["final two"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
