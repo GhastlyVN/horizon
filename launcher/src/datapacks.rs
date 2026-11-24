@@ -35,7 +35,6 @@ fn refuse_world_link(world: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-
 fn refuse_directory_link(path: &Path, missing_ok: bool) -> std::io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if is_link_or_reparse_point(&metadata) => Err(std::io::Error::new(
