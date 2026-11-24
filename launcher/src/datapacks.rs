@@ -8,9 +8,38 @@ use std::path::{Path, PathBuf};
 
 const SETTINGS: &str = "datapacks.json";
 
+fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return metadata.file_attributes() & 0x400 != 0;
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn refuse_world_link(world: &Path) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(world)?;
+    if is_link_or_reparse_point(&metadata) || !metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "{} is not a real world directory; refusing to follow a link or reparse point.",
+                world.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn refuse_link(path: &Path) -> std::io::Result<()> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
+        Ok(metadata) if is_link_or_reparse_point(&metadata) => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
                 "{} is a link; refusing to write through it.",
@@ -59,6 +88,9 @@ fn disabled(settings: &serde_json::Value) -> Vec<String> {
 
 /// The data packs of the world folder `world`, by name.
 pub fn list(world: &Path) -> Vec<DataPack> {
+    if refuse_world_link(world).is_err() {
+        return Vec::new();
+    }
     let off = disabled(&settings(world));
     let mut packs: Vec<DataPack> = fs::read_dir(world.join("datapacks"))
         .into_iter()
@@ -113,6 +145,7 @@ fn check(file: &Path) -> Result<(), String> {
 /// Copies a data pack zip into the world's `datapacks/` under a free name. The game turns it on
 /// the next time the world opens (or on `/reload`).
 pub fn add(world: &Path, file: &Path) -> Result<DataPack, String> {
+    refuse_world_link(world).map_err(|e| format!("World directory: {e}"))?;
     check(file)?;
     let dir = world.join("datapacks");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -140,6 +173,7 @@ pub fn add(world: &Path, file: &Path) -> Result<DataPack, String> {
 
 /// Drops `file/<name>` from both lists of `datapacks.json`, when it is there.
 fn forget(world: &Path, file: &str) -> Result<(), String> {
+    refuse_world_link(world).map_err(|e| format!("World directory: {e}"))?;
     let mut s = settings(world);
     let id = format!("file/{file}");
     let mut changed = false;
@@ -174,6 +208,7 @@ pub fn find(world: &Path, query: &str) -> Result<DataPack, String> {
 
 /// Moves the data pack to the system's trash and forgets it in `datapacks.json`.
 pub fn remove(world: &Path, pack: &DataPack) -> Result<(), String> {
+    refuse_world_link(world).map_err(|e| format!("World directory: {e}"))?;
     crate::desktop_seams::to_trash(&pack.path)
         .map_err(|e| format!("Could not move {} to the trash: {e}", pack.file))?;
     forget(world, &pack.file)

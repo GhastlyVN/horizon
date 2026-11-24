@@ -83,6 +83,49 @@ fn backup_and_copy_refuse_symlinks_inside_the_world() {
     fs::remove_dir_all(home).unwrap();
 }
 
+
+#[test]
+#[cfg(unix)]
+fn symlinked_world_roots_are_not_listed_or_operated_on() {
+    use std::os::unix::fs::symlink;
+
+    let home = scratch("world-root-link");
+    let outside = scratch("world-root-link-target");
+    let real = world(&outside, "Target", vec![("LevelName", name("Outside"))]);
+    fs::create_dir_all(home.join("saves")).unwrap();
+    let alias = home.join("saves/Linked");
+    symlink(&real, &alias).unwrap();
+
+    assert!(list(&home).is_empty());
+    let mut linked = find(&outside, "Target").unwrap();
+    linked.folder = "Linked".into();
+    linked.path = alias;
+    assert!(backup(&home, &linked).is_err());
+    assert!(copy(&linked).is_err());
+    assert!(delete(&linked).is_err());
+    assert!(real.join("level.dat").is_file());
+
+    fs::remove_dir_all(home).unwrap();
+    fs::remove_dir_all(outside).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn does_not_enumerate_a_symlinked_saves_directory() {
+    use std::os::unix::fs::symlink;
+
+    let home = scratch("saves-root-link");
+    let outside = scratch("saves-root-link-target");
+    world(&outside, "Target", vec![("LevelName", name("Outside"))]);
+    symlink(outside.join("saves"), home.join("saves")).unwrap();
+
+    assert!(list(&home).is_empty());
+
+    fs::remove_dir_all(home).unwrap();
+    fs::remove_dir_all(outside).unwrap();
+}
+
+
 #[test]
 fn lists_what_each_world_is() {
     let home = scratch("list");
