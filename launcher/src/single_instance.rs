@@ -30,6 +30,7 @@ impl StateLock {
         let lock_path = dir.join(name);
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)
@@ -152,7 +153,7 @@ mod tests {
         let dir = scratch("race");
         fs::write(dir.join(LAUNCHER_LOCK), "4294967295\n").unwrap();
         let ready = dir.join("ready");
-        let child = Command::new(std::env::current_exe().unwrap())
+        let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "single_instance::tests::hold_lock_for_parent",
