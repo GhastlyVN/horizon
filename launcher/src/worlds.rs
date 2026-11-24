@@ -13,17 +13,15 @@ const LOCK: &str = "session.lock";
 
 /// Reject world roots that resolve through a symlink or Windows reparse point.
 fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
+    let symlink = metadata.file_type().is_symlink();
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        return metadata.file_attributes() & 0x400 != 0;
+        symlink || metadata.file_attributes() & 0x400 != 0
     }
     #[cfg(not(windows))]
     {
-        false
+        symlink
     }
 }
 
