@@ -89,6 +89,8 @@ impl Drop for StateLock {
 /// The application-level single-instance guard: at most one launcher process owns the data
 /// directory. Backed by a [`StateLock`] on `launcher.lock`.
 pub struct SingleInstance {
+    // Kept alive for StateLock's Drop, which releases the lock exactly once.
+    #[allow(dead_code)]
     inner: StateLock,
 }
 
@@ -108,13 +110,6 @@ impl SingleInstance {
         Ok(Self {
             inner: StateLock::acquire(data_dir, LAUNCHER_LOCK)?,
         })
-    }
-}
-
-impl Drop for SingleInstance {
-    fn drop(&mut self) {
-        // Release the single-instance lock.
-        self.inner.release();
     }
 }
 
