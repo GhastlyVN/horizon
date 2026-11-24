@@ -3238,7 +3238,8 @@ pub fn self_update(release: &Release, progress: impl Fn(f32)) -> Result<(), Stri
     }
     let binary =
         find_file(&unpacked, LAUNCHER_BINARY).ok_or("The download has no launcher binary.")?;
-    replace_binary(&binary, exe_path()).map_err(|e| {
+    let binary = fs::File::open(&binary).map_err(|e| e.to_string())?;
+    replace_binary(binary, exe_path()).map_err(|e| {
         format!(
             "Could not replace the launcher at {}: {e}",
             exe_path().display()
