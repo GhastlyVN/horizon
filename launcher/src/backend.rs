@@ -5508,6 +5508,24 @@ pub fn {f}("
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_swapped_download_path_cannot_change_the_installed_binary() {
+        let dir = std::env::temp_dir().join(format!("horizon-launcher-verified-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("horizon-launcher");
+        fs::write(&exe, "old").unwrap();
+        let new = dir.join("new");
+        fs::write(&new, "verified").unwrap();
+        let verified = fs::File::open(&new).unwrap();
+        fs::write(&new, "swapped").unwrap();
+
+        replace_binary(verified, &exe).unwrap();
+        assert_eq!(fs::read_to_string(&exe).unwrap(), "verified");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// The launcher's file was replaced while it ran (an update from the command line, or an
     /// earlier one): the next replacement still lands at the path it started from.
     #[cfg(unix)]
@@ -5524,7 +5542,7 @@ pub fn {f}("
         fs::write(dir.join("other"), "other update").unwrap();
         fs::rename(dir.join("other"), &exe).unwrap();
         fs::write(dir.join("new"), "new").unwrap();
-        replace_binary(&dir.join("new"), &exe).unwrap();
+        replace_binary(fs::File::open(dir.join("new")).unwrap(), &exe).unwrap();
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
         // The file there keeps its mode, made executable (the swapped-in one was 0644).
         assert_eq!(
@@ -5533,7 +5551,7 @@ pub fn {f}("
         );
         // Gone altogether: it is put back, executable.
         fs::remove_file(&exe).unwrap();
-        replace_binary(&dir.join("new"), &exe).unwrap();
+        replace_binary(fs::File::open(dir.join("new")).unwrap(), &exe).unwrap();
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
         assert_eq!(
             fs::metadata(&exe).unwrap().permissions().mode() & 0o777,
