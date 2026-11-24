@@ -1,15 +1,13 @@
 //! Single-instance guard and cross-process state locks: at most one launcher process holds the
 //! data directory, and shared state writes serialize through per-file lock files.
 //!
-//! The launcher-level lock (`launcher.lock`) makes a second launcher refuse to start while the
-//! first is alive; a stale lock left by a crashed process is detected through the owning process
-//! id and reused, so there is no permanent deadlock.
+//! The launcher-level lock (`launcher.lock`) is held by the OS: the first process owns it until it
+//! exits or drops the guard, so a lock file left by a crash needs no PID check or cleanup.
 //!
 //! Shared-state writers use [`StateLock`], a cross-process mutual exclusion on a per-file lock
 //! name, for read-modify-write cycles that must not interleave.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 /// The launcher-level lock file's name inside the launcher's data directory.
@@ -17,12 +15,11 @@ const LAUNCHER_LOCK: &str = "launcher.lock";
 
 /// A cross-process mutual exclusion lock on a file inside a directory.
 ///
-/// The lock is a file named `name` inside `dir` holding the owning process id. Creating the file
-/// with `create_new` is atomic, so exactly one live process can hold it; when the file already
-/// exists the owner is checked through its process id and a stale lock is recycled, which keeps
-/// the lock crash-safe without permanent deadlocks.
+/// The lock is a file named `name` inside `dir`, held with an OS advisory lock. Creating the file
+/// is atomic and the kernel releases the lock when its owner exits, so a leftover file cannot be
+/// stolen or recycle a reused process id.
 pub struct StateLock {
-    lock_path: PathBuf,
+    _file: File,
 }
 
 impl StateLock {
@@ -31,65 +28,52 @@ impl StateLock {
     /// Fails with a clear message when another live process already holds the lock.
     pub fn acquire(dir: &Path, name: &str) -> Result<Self, String> {
         let lock_path = dir.join(name);
-        let mut attempts = 0;
-        loop {
-            attempts += 1;
-            match OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&lock_path)
-            {
-                Ok(mut file) => {
-                    let _ = writeln!(file, "{}", std::process::id());
-                    let _ = file.sync_all();
-                    return Ok(Self { lock_path });
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // A lock file exists. If its owner is still alive, we are a duplicate.
-                    // If the owner crashed, clean up and retry.
-                    let owner = fs::read_to_string(&lock_path)
-                        .ok()
-                        .and_then(|t| t.trim().parse::<u32>().ok());
-                    if owner.is_some_and(process_alive) {
-                        let shown = owner
-                            .map(|pid| pid.to_string())
-                            .unwrap_or_else(|| "unknown".into());
-                        return Err(format!(
-                            "Another process (PID {shown}) holds the lock {}.",
-                            lock_path.display()
-                        ));
-                    }
-                    let _ = fs::remove_file(&lock_path);
-                    if attempts > 10 {
-                        return Err(format!(
-                            "Could not acquire the lock {} after retries: {e}",
-                            lock_path.display()
-                        ));
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(e) => return Err(format!("{lock_path:?}: {e}")),
-            }
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|e| format!("{lock_path:?}: {e}"))?;
+        if !try_lock(&file) {
+            return Err(format!(
+                "Another process holds the lock {}.",
+                lock_path.display()
+            ));
         }
-    }
-
-    /// Release the lock by removing its file. A crash leaves the file, but the next holder
-    /// detects the dead owner and reuses it.
-    pub(crate) fn release(&mut self) {
-        let _ = fs::remove_file(&self.lock_path);
+        Ok(Self { _file: file })
     }
 }
 
-impl Drop for StateLock {
-    fn drop(&mut self) {
-        self.release();
+#[cfg(unix)]
+fn try_lock(file: &File) -> bool {
+    use std::os::unix::io::AsRawFd;
+    // The kernel drops flock on exit, including process::exit or a crash.
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+}
+
+#[cfg(windows)]
+fn try_lock(file: &File) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+    };
+    let mut overlapped = std::mem::zeroed();
+    unsafe {
+        LockFileEx(
+            file.as_raw_handle(),
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            1,
+            0,
+            &mut overlapped,
+        ) != 0
     }
 }
 
 /// The application-level single-instance guard: at most one launcher process owns the data
 /// directory. Backed by a [`StateLock`] on `launcher.lock`.
 pub struct SingleInstance {
-    // Kept alive for StateLock's Drop, which releases the lock exactly once.
+    // Kept alive for the OS lock, which is released exactly once when the guard is dropped.
     #[allow(dead_code)]
     inner: StateLock,
 }
@@ -113,62 +97,12 @@ impl SingleInstance {
     }
 }
 
-/// Whether a process with `pid` is still alive.
-#[cfg(unix)]
-fn process_alive(pid: u32) -> bool {
-    // Never cast an out-of-range u32 to pid_t: on BSD/macOS, u32::MAX would
-    // wrap to -1, and kill(-1, 0) probes every process instead of one PID.
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
-    };
-    if pid <= 0 {
-        return false;
-    }
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        return true;
-    }
-    match std::io::Error::last_os_error().raw_os_error() {
-        Some(libc::ESRCH) => false,
-        Some(libc::EPERM) => true,
-        // Unknown probe failures must fail closed rather than steal a live lock.
-        _ => true,
-    }
-}
-
-#[cfg(windows)]
-fn process_alive(pid: u32) -> bool {
-    // Ask the kernel whether the owning process handle is signalled. If Windows refuses
-    // access for any reason other than an invalid PID, fail closed and keep the lock.
-    use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT,
-    };
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-
-    // SYNCHRONIZE is a standard process access right (0x0010_0000), not a
-    // Threading-module constant in windows-sys 0.61.
-    const SYNCHRONIZE: u32 = 0x0010_0000;
-
-    unsafe {
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, pid);
-        if process.is_null() {
-            return GetLastError() != ERROR_INVALID_PARAMETER;
-        }
-        let status = WaitForSingleObject(process, 0);
-        CloseHandle(process);
-        match status {
-            WAIT_OBJECT_0 => false,
-            WAIT_TIMEOUT => true,
-            // Unknown wait failures must never cause a live process's lock to be stolen.
-            _ => true,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+    use std::thread;
+    use std::time::Duration;
 
     fn scratch(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -212,14 +146,50 @@ mod tests {
     }
 
     #[test]
-    fn process_probe_keeps_the_current_process_alive() {
-        assert!(process_alive(std::process::id()));
+    fn stale_lock_cannot_be_stolen_while_another_process_holds_it() {
+        let dir = scratch("race");
+        fs::write(dir.join(LAUNCHER_LOCK), "4294967295\n").unwrap();
+        let ready = dir.join("ready");
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "single_instance::tests::hold_lock_for_parent",
+                "--nocapture",
+            ])
+            .env("HORIZON_LOCK_CHILD_DIR", &dir)
+            .env("HORIZON_LOCK_READY", &ready)
+            .spawn()
+            .unwrap();
+        let mut acquired = false;
+        for _ in 0..100 {
+            if ready.exists() {
+                acquired = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(acquired, "child did not acquire the lock");
+        assert!(
+            SingleInstance::acquire(&dir).is_err(),
+            "a stale pid let a second process steal a live lock"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(SingleInstance::acquire(&dir).is_ok());
     }
 
     #[test]
-    fn process_probe_rejects_zero_and_out_of_range_pids() {
-        assert!(!process_alive(0));
-        assert!(!process_alive(u32::MAX));
+    fn hold_lock_for_parent() {
+        let (Ok(dir), Ok(ready)) = (
+            std::env::var("HORIZON_LOCK_CHILD_DIR"),
+            std::env::var("HORIZON_LOCK_READY"),
+        ) else {
+            return;
+        };
+        let guard = SingleInstance::acquire(Path::new(&dir)).unwrap();
+        fs::write(ready, b"ok").unwrap();
+        thread::sleep(Duration::from_secs(5));
+        drop(guard);
     }
 
     #[test]
