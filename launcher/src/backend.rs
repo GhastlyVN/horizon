@@ -3,7 +3,7 @@
 //! block; the GUI runs them on threads and reads their messages.
 use crate::{account, mojang, sources};
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Sender;
@@ -908,7 +908,7 @@ pub(crate) fn download(
     sha256: &str,
     to: &Path,
     progress: &impl Fn(f32),
-) -> Result<(), String> {
+) -> Result<fs::File, String> {
     let response = get(url)?;
     let size = match size {
         0 => response
@@ -920,7 +920,12 @@ pub(crate) fn download(
     let cap = crate::browser::download::MAX;
     let limit = if size > 0 { size.min(cap) } else { cap };
     let mut reader = response.into_reader();
-    let mut file = fs::File::create(to).map_err(|e| e.to_string())?;
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(to)
+        .map_err(|e| e.to_string())?;
     let mut hash = horizon_release_sign::Sha256::default();
     let (mut done, mut buf) = (0u64, vec![0u8; 1 << 16]);
     loop {
@@ -944,17 +949,21 @@ pub(crate) fn download(
     let name = url.rsplit('/').next().unwrap_or(url);
     horizon_release_sign::check(name, sha256, &hash.hex()).inspect_err(|_| {
         let _ = fs::remove_file(to);
-    })
+    })?;
+    file.seek(SeekFrom::Start(0)).map_err(|e| {
+        let _ = fs::remove_file(to);
+        e.to_string()
+    })?;
+    Ok(file)
 }
 
-fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
-    let file = fs::File::open(archive).map_err(|e| e.to_string())?;
+fn unpack(archive: fs::File, url: &str, to: &Path) -> Result<(), String> {
     if url.ends_with(".tar.gz") {
-        tar::Archive::new(flate2::read::GzDecoder::new(file))
+        tar::Archive::new(flate2::read::GzDecoder::new(archive))
             .unpack(to)
             .map_err(|e| e.to_string())
     } else {
-        zip::ZipArchive::new(file)
+        zip::ZipArchive::new(archive)
             .and_then(|mut z| z.extract(to))
             .map_err(|e| e.to_string())
     }
@@ -996,9 +1005,9 @@ pub(crate) fn install_as(
     let _ = fs::remove_dir_all(&partial);
     fs::create_dir_all(&partial).map_err(|e| e.to_string())?;
     let archive = partial.join("download");
-    download(&url, size, sha256, &archive, &progress)?;
+    let verified = download(&url, size, sha256, &archive, &progress)?;
     let unpacked = partial.join("unpacked");
-    unpack(&archive, &url, &unpacked)?;
+    unpack(verified, &url, &unpacked)?;
     progress(0.97);
     // The archives hold one top folder (horizon-linux-x86_64/...); the version folder is its contents.
     let entries: Vec<_> = fs::read_dir(&unpacked)
@@ -3018,7 +3027,7 @@ fn installed_launcher_version(path: &Path) -> Option<String> {
 /// binary is, and Linux answers "<path> (deleted)" once the file has been replaced, so a second
 /// update in the same run failed with "No such file or directory".
 #[cfg(unix)]
-fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
+fn replace_binary(mut new: fs::File, exe: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let dir = exe.parent().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "the launcher has no folder")
@@ -3026,9 +3035,17 @@ fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
     let name = exe.file_name().unwrap_or_default().to_string_lossy();
     let temp = dir.join(format!(".{name}.update-{}", std::process::id()));
     let mode = fs::metadata(exe).map_or(0o755, |m| m.permissions().mode() | 0o111);
-    let result = fs::copy(new, &temp)
-        .and_then(|_| fs::set_permissions(&temp, fs::Permissions::from_mode(mode)))
-        .and_then(|_| fs::rename(&temp, exe));
+    let result = (|| {
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        std::io::copy(&mut new, &mut out)?;
+        out.flush()?;
+        drop(out);
+        fs::set_permissions(&temp, fs::Permissions::from_mode(mode))?;
+        fs::rename(&temp, exe)
+    })();
     if result.is_err() {
         let _ = fs::remove_file(&temp);
     }
@@ -3042,7 +3059,7 @@ fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
 /// the original through a hidden `cmd.exe`, which Microsoft Defender quarantines as
 /// Trojan:Script/Wacatac (#3175).
 #[cfg(not(unix))]
-fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
+fn replace_binary(mut new: fs::File, exe: &Path) -> std::io::Result<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     // A second update in the same run moves the first one's binary aside too.
     static MOVED: AtomicU32 = AtomicU32::new(0);
@@ -3056,7 +3073,14 @@ fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
         "{name}.old-{pid}-{}",
         MOVED.fetch_add(1, Ordering::Relaxed)
     ));
-    if let Err(e) = fs::copy(new, &temp) {
+    if let Err(e) = (|| {
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        std::io::copy(&mut new, &mut out)?;
+        out.flush()
+    })() {
         let _ = fs::remove_file(&temp);
         return Err(e);
     }
@@ -3179,7 +3203,7 @@ pub fn self_update(release: &Release, progress: impl Fn(f32)) -> Result<(), Stri
     let _ = fs::remove_dir_all(&work);
     fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let archive = work.join("download");
-    download(&url, size, &sha256, &archive, &progress)?;
+    let verified = download(&url, size, &sha256, &archive, &progress)?;
     // An AppImage is the whole program: the new one takes the place of the file `$APPIMAGE` names
     // (the running mount keeps its copy until `restart` starts it). Its archive is not a `.tar.gz`
     // to unpack, so this comes before the unpacking below.
@@ -3190,7 +3214,7 @@ pub fn self_update(release: &Release, progress: impl Fn(f32)) -> Result<(), Stri
                 release.tag
             ));
         }
-        replace_binary(&archive, &appimage).map_err(|e| {
+        replace_binary(verified, &appimage).map_err(|e| {
             format!(
                 "Could not replace the AppImage at {}: {e}",
                 appimage.display()
@@ -3201,7 +3225,7 @@ pub fn self_update(release: &Release, progress: impl Fn(f32)) -> Result<(), Stri
         return Ok(());
     }
     let unpacked = work.join("unpacked");
-    unpack(&archive, &url, &unpacked)?;
+    unpack(verified, &url, &unpacked)?;
     // A launcher inside Horizon.app replaces the whole bundle (its Info.plist, icon and
     // signature belong with the binary); a bare binary, as older launchers are, only the binary,
     // which the macOS archive also holds (Horizon.app/Contents/MacOS/horizon-launcher).
@@ -3215,7 +3239,8 @@ pub fn self_update(release: &Release, progress: impl Fn(f32)) -> Result<(), Stri
     }
     let binary =
         find_file(&unpacked, LAUNCHER_BINARY).ok_or("The download has no launcher binary.")?;
-    replace_binary(&binary, exe_path()).map_err(|e| {
+    let binary = fs::File::open(&binary).map_err(|e| e.to_string())?;
+    replace_binary(binary, exe_path()).map_err(|e| {
         format!(
             "Could not replace the launcher at {}: {e}",
             exe_path().display()
@@ -5428,7 +5453,12 @@ pub fn {f}("
             .status()
             .unwrap();
         assert!(zipped.success());
-        unpack(&zip, "release.zip", &work.join("unpacked")).unwrap();
+        unpack(
+            fs::File::open(&zip).unwrap(),
+            "release.zip",
+            &work.join("unpacked"),
+        )
+        .unwrap();
         let new = find_app(&work.join("unpacked")).unwrap();
         replace_bundle(&new, &installed).unwrap();
         let version = fs::read_to_string(installed.join("Contents/Resources/version")).unwrap();
@@ -5485,6 +5515,27 @@ pub fn {f}("
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_swapped_download_path_cannot_change_the_installed_binary() {
+        let dir =
+            std::env::temp_dir().join(format!("horizon-launcher-verified-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("horizon-launcher");
+        fs::write(&exe, "old").unwrap();
+        let new = dir.join("new");
+        fs::write(&new, "verified").unwrap();
+        let verified = fs::File::open(&new).unwrap();
+        // Replacing the directory entry, not the same inode, is what a path swap means.
+        fs::remove_file(&new).unwrap();
+        fs::write(&new, "swapped").unwrap();
+
+        replace_binary(verified, &exe).unwrap();
+        assert_eq!(fs::read_to_string(&exe).unwrap(), "verified");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// The launcher's file was replaced while it ran (an update from the command line, or an
     /// earlier one): the next replacement still lands at the path it started from.
     #[cfg(unix)]
@@ -5501,7 +5552,7 @@ pub fn {f}("
         fs::write(dir.join("other"), "other update").unwrap();
         fs::rename(dir.join("other"), &exe).unwrap();
         fs::write(dir.join("new"), "new").unwrap();
-        replace_binary(&dir.join("new"), &exe).unwrap();
+        replace_binary(fs::File::open(dir.join("new")).unwrap(), &exe).unwrap();
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
         // The file there keeps its mode, made executable (the swapped-in one was 0644).
         assert_eq!(
@@ -5510,7 +5561,7 @@ pub fn {f}("
         );
         // Gone altogether: it is put back, executable.
         fs::remove_file(&exe).unwrap();
-        replace_binary(&dir.join("new"), &exe).unwrap();
+        replace_binary(fs::File::open(dir.join("new")).unwrap(), &exe).unwrap();
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
         assert_eq!(
             fs::metadata(&exe).unwrap().permissions().mode() & 0o777,

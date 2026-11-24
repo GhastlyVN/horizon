@@ -327,9 +327,9 @@ pub fn install(progress: impl Fn(f32)) -> Result<Toolchain, String> {
         let file = format!("{name}-{VERSION}-{}.tar.gz", host.target);
         let archive = root().join(format!(".{file}"));
         let step = |f: f32| progress((i as f32 + f) / count);
-        backend::download(&format!("{DIST}/{file}"), 0, sha256, &archive, &step)
+        let verified = backend::download(&format!("{DIST}/{file}"), 0, sha256, &archive, &step)
             .map_err(|e| format!("Rust {VERSION} ({name}): {e}"))?;
-        let unpacked = unpack(&archive, &partial);
+        let unpacked = unpack(verified, &partial);
         let _ = fs::remove_file(&archive);
         unpacked.map_err(|e| format!("Rust {VERSION} ({name}): {e}"))?;
     }
@@ -337,9 +337,9 @@ pub fn install(progress: impl Fn(f32)) -> Result<Toolchain, String> {
         let archive = root().join(".mingw.zip");
         let done = host.components.len() as f32;
         let step = |f: f32| progress((done + f) / count);
-        backend::download(mingw.url, 0, mingw.sha256, &archive, &step)
+        let verified = backend::download(mingw.url, 0, mingw.sha256, &archive, &step)
             .map_err(|e| format!("MinGW-w64 ({}): {e}", mingw.version))?;
-        let unpacked = unpack_mingw(&archive, &partial);
+        let unpacked = unpack_mingw(verified, &partial);
         let _ = fs::remove_file(&archive);
         unpacked.map_err(|e| format!("MinGW-w64 ({}): {e}", mingw.version))?;
     }
@@ -353,9 +353,8 @@ pub fn install(progress: impl Fn(f32)) -> Result<Toolchain, String> {
 /// Unpacks one component archive into `prefix`, as its installer would: an archive holds
 /// `<top>/<component>/<files>` per component, and each component's files go under `prefix`. Its
 /// installer script, lists and `manifest.in` stay out.
-fn unpack(archive: &Path, prefix: &Path) -> Result<(), String> {
-    let file = fs::File::open(archive).map_err(|e| e.to_string())?;
-    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
+fn unpack(archive: fs::File, prefix: &Path) -> Result<(), String> {
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
     for entry in tar.entries().map_err(|e| e.to_string())? {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?.into_owned();
@@ -393,9 +392,8 @@ fn component_path(path: &Path) -> Option<PathBuf> {
 }
 
 /// Unpacks MinGW-w64's zip into `prefix`: its `mingw64/` folder, documentation left out.
-fn unpack_mingw(archive: &Path, prefix: &Path) -> Result<(), String> {
-    let file = fs::File::open(archive).map_err(|e| e.to_string())?;
-    let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+fn unpack_mingw(archive: fs::File, prefix: &Path) -> Result<(), String> {
+    let mut zip = zip::ZipArchive::new(archive).map_err(|e| e.to_string())?;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
         let Some(relative) = entry.enclosed_name().and_then(|p| mingw_path(&p)) else {
@@ -736,7 +734,7 @@ mod tests {
         }
         tar.into_inner().unwrap().finish().unwrap().flush().unwrap();
         let prefix = dir.join("prefix");
-        unpack(&archive, &prefix).unwrap();
+        unpack(fs::File::open(&archive).unwrap(), &prefix).unwrap();
         assert_eq!(
             fs::read_to_string(prefix.join("bin/cargo")).unwrap(),
             "binary"
@@ -845,7 +843,7 @@ mod tests {
         }
         zip.finish().unwrap();
         let prefix = dir.join("prefix");
-        unpack_mingw(&archive, &prefix).unwrap();
+        unpack_mingw(fs::File::open(&archive).unwrap(), &prefix).unwrap();
         assert_eq!(
             fs::read_to_string(prefix.join("mingw64/bin/gcc.exe")).unwrap(),
             "gcc"
