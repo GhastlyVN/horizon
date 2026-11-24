@@ -3026,7 +3026,7 @@ fn installed_launcher_version(path: &Path) -> Option<String> {
 /// binary is, and Linux answers "<path> (deleted)" once the file has been replaced, so a second
 /// update in the same run failed with "No such file or directory".
 #[cfg(unix)]
-fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
+fn replace_binary(mut new: fs::File, exe: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let dir = exe.parent().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "the launcher has no folder")
@@ -3034,9 +3034,17 @@ fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
     let name = exe.file_name().unwrap_or_default().to_string_lossy();
     let temp = dir.join(format!(".{name}.update-{}", std::process::id()));
     let mode = fs::metadata(exe).map_or(0o755, |m| m.permissions().mode() | 0o111);
-    let result = fs::copy(new, &temp)
-        .and_then(|_| fs::set_permissions(&temp, fs::Permissions::from_mode(mode)))
-        .and_then(|_| fs::rename(&temp, exe));
+    let result = (|| {
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        std::io::copy(&mut new, &mut out)?;
+        out.flush()?;
+        drop(out);
+        fs::set_permissions(&temp, fs::Permissions::from_mode(mode))?;
+        fs::rename(&temp, exe)
+    })();
     if result.is_err() {
         let _ = fs::remove_file(&temp);
     }
@@ -3050,7 +3058,7 @@ fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
 /// the original through a hidden `cmd.exe`, which Microsoft Defender quarantines as
 /// Trojan:Script/Wacatac (#3175).
 #[cfg(not(unix))]
-fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
+fn replace_binary(mut new: fs::File, exe: &Path) -> std::io::Result<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     // A second update in the same run moves the first one's binary aside too.
     static MOVED: AtomicU32 = AtomicU32::new(0);
@@ -3064,7 +3072,14 @@ fn replace_binary(new: &Path, exe: &Path) -> std::io::Result<()> {
         "{name}.old-{pid}-{}",
         MOVED.fetch_add(1, Ordering::Relaxed)
     ));
-    if let Err(e) = fs::copy(new, &temp) {
+    if let Err(e) = (|| {
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        std::io::copy(&mut new, &mut out)?;
+        out.flush()
+    })() {
         let _ = fs::remove_file(&temp);
         return Err(e);
     }
