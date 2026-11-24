@@ -203,7 +203,10 @@ pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| format!("{name}: {e}"))?;
         let Some(inner) = entry.enclosed_name() else {
-            return Err(format!("{name}: ZIP entry escapes the backup: {}", entry.name()));
+            return Err(format!(
+                "{name}: ZIP entry escapes the backup: {}",
+                entry.name()
+            ));
         };
         let out = scratch.join(&inner);
         if entry.is_dir() {
@@ -465,7 +468,8 @@ mod tests {
 
     #[test]
     fn restore_refuses_zip_slip_entry() {
-        let dir = std::env::temp_dir().join(format!("horizon-server-zipslip-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("horizon-server-zipslip-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let config = Config::default();
         let world = dir.join("world");
@@ -476,14 +480,23 @@ mod tests {
         let zip_path = dir.join("backups").join("manual.zip");
         let f = std::fs::File::create(&zip_path).unwrap();
         let mut w = ZipWriter::new(std::io::BufWriter::new(f));
-        w.start_file("world/level.dat", SimpleFileOptions::default()).unwrap();
+        w.start_file("world/level.dat", SimpleFileOptions::default())
+            .unwrap();
         w.write_all(b"before").unwrap();
-        w.start_file("../../escape.txt", SimpleFileOptions::default()).unwrap();
+        w.start_file("../../escape.txt", SimpleFileOptions::default())
+            .unwrap();
         w.write_all(b"pwned").unwrap();
         w.finish().unwrap().into_inner().sync_all().unwrap();
         let result = restore(&dir, &config, "manual.zip");
-        assert!(result.is_err(), "zip-slip entry must be refused: {:?}", result.err());
-        assert!(!dir.join("escape.txt").exists(), "no file outside the scratch dir");
+        assert!(
+            result.is_err(),
+            "zip-slip entry must be refused: {:?}",
+            result.err()
+        );
+        assert!(
+            !dir.join("escape.txt").exists(),
+            "no file outside the scratch dir"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -539,4 +552,3 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
-
