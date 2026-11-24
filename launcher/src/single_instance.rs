@@ -8,7 +8,7 @@
 //! name, for read-modify-write cycles that must not interleave.
 
 use std::fs::{self, File, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The launcher-level lock file's name inside the launcher's data directory.
 const LAUNCHER_LOCK: &str = "launcher.lock";
@@ -57,7 +57,8 @@ fn try_lock(file: &File) -> bool {
     use windows_sys::Win32::Storage::FileSystem::{
         LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
     };
-    let mut overlapped = std::mem::zeroed();
+    // SAFETY: Win32 requires a zero-initialized OVERLAPPED for this lock request.
+    let mut overlapped = unsafe { std::mem::zeroed() };
     unsafe {
         LockFileEx(
             file.as_raw_handle(),
@@ -100,6 +101,7 @@ impl SingleInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::process::Command;
     use std::thread;
     use std::time::Duration;
