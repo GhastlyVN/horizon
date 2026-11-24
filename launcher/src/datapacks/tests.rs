@@ -165,3 +165,22 @@ fn coverage_says_what_runs() {
     );
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+#[cfg(unix)]
+fn forgetting_a_pack_refuses_a_linked_settings_file() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("settings-link");
+    let world = root.join("world");
+    fs::create_dir_all(&world).unwrap();
+    let original = r#"{"disabled":["file/Old.zip"]}"#;
+    let victim = root.join("victim.json");
+    fs::write(&victim, original).unwrap();
+    symlink(&victim, world.join(SETTINGS)).unwrap();
+
+    let err = forget(&world, "Old.zip").unwrap_err();
+    assert!(err.contains("link"), "{err}");
+    assert_eq!(fs::read_to_string(&victim).unwrap(), original);
+    fs::remove_dir_all(root).unwrap();
+}
