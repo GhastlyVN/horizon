@@ -12,11 +12,17 @@ fn refuse_link(path: &Path) -> std::io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("{} is a link; refusing to write through it.", path.display()),
+            format!(
+                "{} is a link; refusing to write through it.",
+                path.display()
+            ),
         )),
         Ok(metadata) if !metadata.file_type().is_file() => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("{} is not a regular file; refusing to write to it.", path.display()),
+            format!(
+                "{} is not a regular file; refusing to write to it.",
+                path.display()
+            ),
         )),
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
