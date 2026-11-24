@@ -486,7 +486,12 @@ mod tests {
         w.start_file("../../escape.txt", SimpleFileOptions::default())
             .unwrap();
         w.write_all(b"pwned").unwrap();
-        w.finish().unwrap().into_inner().unwrap().sync_all().unwrap();
+        w.finish()
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .sync_all()
+            .unwrap();
         let result = restore(&dir, &config, "manual.zip");
         assert!(
             result.is_err(),
