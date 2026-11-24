@@ -1006,9 +1006,17 @@ mod tests {
             std::os::unix::fs::symlink(&victim, &target).unwrap();
             write_private(&target, b"secret").unwrap();
             assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
-            assert!(!std::fs::symlink_metadata(&target).unwrap().file_type().is_symlink());
+            assert!(
+                !std::fs::symlink_metadata(&target)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
         #[cfg(not(unix))]
         {
