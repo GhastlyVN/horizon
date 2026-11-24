@@ -5511,7 +5511,8 @@ pub fn {f}("
     #[cfg(unix)]
     #[test]
     fn a_swapped_download_path_cannot_change_the_installed_binary() {
-        let dir = std::env::temp_dir().join(format!("horizon-launcher-verified-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("horizon-launcher-verified-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let exe = dir.join("horizon-launcher");
