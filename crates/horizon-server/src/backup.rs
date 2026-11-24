@@ -191,59 +191,95 @@ pub fn find(dir: &Path, name: &str) -> Result<String, String> {
         })
 }
 
+fn put_restored_path_in_place(
+    restored: &Path,
+    current: &Path,
+    moved: Option<&Path>,
+    description: &str,
+) -> Result<(), String> {
+    if let Err(error) = std::fs::rename(restored, current) {
+        if let Some(previous) = moved {
+            if let Err(rollback) = std::fs::rename(previous, current) {
+                return Err(format!(
+                    "{description}: {error}; rollback failed: {rollback}; previous world remains at {}",
+                    previous.display()
+                ));
+            }
+        }
+        return Err(format!("{description}: {error}"));
+    }
+    Ok(())
+}
+
 /// Puts the backup's world in place of the current one, which goes to `backups/replaced-<time>/`. The
 /// server must be stopped. Returns where the old world went.
 pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf>, String> {
     let zip_path = dir.join(DIR).join(name);
     let scratch = dir.join(".horizon/restore");
     let _ = std::fs::remove_dir_all(&scratch);
-    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
-    let file = File::open(&zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
-    let mut zip = ZipArchive::new(file).map_err(|e| format!("{name}: {e}"))?;
-    for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| format!("{name}: {e}"))?;
-        let Some(inner) = entry.enclosed_name() else {
+    let result = (|| {
+        std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+        let file = File::open(&zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
+        let mut zip = ZipArchive::new(file).map_err(|e| format!("{name}: {e}"))?;
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).map_err(|e| format!("{name}: {e}"))?;
+            let Some(inner) = entry.enclosed_name() else {
+                return Err(format!(
+                    "{name}: ZIP entry escapes the backup: {:?}",
+                    entry.name()
+                ));
+            };
+            let out = scratch.join(&inner);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&out).map_err(|e| format!("{name}: {e}"))?;
+                continue;
+            }
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("{name}: {e}"))?;
+            }
+            let mut dest = File::create(&out).map_err(|e| format!("{name}: {e}"))?;
+            std::io::copy(&mut entry, &mut dest).map_err(|e| format!("{name}: {e}"))?;
+        }
+        let world = &config.world.name;
+        let restored = scratch.join(world);
+        if !restored.join("level.dat").is_file() {
             return Err(format!(
-                "{name}: ZIP entry escapes the backup: {:?}",
-                entry.name()
+                "{name} holds no world named {world:?} (no {world}/level.dat)"
             ));
+        }
+        let current = dir.join(world);
+        let moved = if current.exists() {
+            let aside = dir
+                .join(DIR)
+                .join(format!("replaced-{}", stamp(SystemTime::now())));
+            std::fs::create_dir_all(&aside).map_err(|e| e.to_string())?;
+            let target = aside.join(world);
+            std::fs::rename(&current, &target)
+                .map_err(|e| format!("moving the current world aside: {e}"))?;
+            Some(target)
+        } else {
+            None
         };
-        let out = scratch.join(&inner);
-        if entry.is_dir() {
-            std::fs::create_dir_all(&out).map_err(|e| format!("{name}: {e}"))?;
-            continue;
+        put_restored_path_in_place(
+            &restored,
+            &current,
+            moved.as_deref(),
+            "putting the backup in place",
+        )?;
+        Ok(moved)
+    })();
+
+    match (result, std::fs::remove_dir_all(&scratch)) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(error)) if error.kind() == std::io::ErrorKind::NotFound => result,
+        (Ok(_), Err(error)) => Err(format!(
+            "backup restore completed, but temporary extraction cleanup failed: {error}"
+        )),
+        (Err(error), Err(cleanup)) if cleanup.kind() != std::io::ErrorKind::NotFound => {
+            Err(format!("{error}; temporary extraction cleanup failed: {cleanup}"))
         }
-        if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("{name}: {e}"))?;
-        }
-        let mut dest = File::create(&out).map_err(|e| format!("{name}: {e}"))?;
-        std::io::copy(&mut entry, &mut dest).map_err(|e| format!("{name}: {e}"))?;
+        (Err(error), _) => Err(error),
     }
-    let world = &config.world.name;
-    let restored = scratch.join(world);
-    if !restored.join("level.dat").is_file() {
-        let _ = std::fs::remove_dir_all(&scratch);
-        return Err(format!(
-            "{name} holds no world named {world:?} (no {world}/level.dat)"
-        ));
-    }
-    let current = dir.join(world);
-    let moved = if current.exists() {
-        let aside = dir
-            .join(DIR)
-            .join(format!("replaced-{}", stamp(SystemTime::now())));
-        std::fs::create_dir_all(&aside).map_err(|e| e.to_string())?;
-        let target = aside.join(world);
-        std::fs::rename(&current, &target)
-            .map_err(|e| format!("moving the current world aside: {e}"))?;
-        Some(target)
-    } else {
-        None
-    };
-    std::fs::rename(&restored, &current)
-        .map_err(|e| format!("putting the backup in place: {e}"))?;
-    let _ = std::fs::remove_dir_all(&scratch);
-    Ok(moved)
 }
 
 /// A dimension id (`minecraft:the_nether`, or `the_nether` for `minecraft:`) as the id and its folder in the
@@ -502,6 +538,34 @@ mod tests {
             !dir.join("escape.txt").exists(),
             "no file outside the scratch dir"
         );
+        assert!(
+            !dir.join(".horizon/restore").exists(),
+            "failed extraction must clean its scratch directory"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn restore_rolls_back_the_previous_world_if_install_fails() {
+        let dir = std::env::temp_dir().join(format!("horizon-server-rollback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let previous = dir.join("backups/replaced/world");
+        let current = dir.join("world");
+        let missing = dir.join(".horizon/restore/world");
+        std::fs::create_dir_all(&previous).unwrap();
+        std::fs::write(previous.join("level.dat"), b"before").unwrap();
+
+        let error = put_restored_path_in_place(
+            &missing,
+            &current,
+            Some(&previous),
+            "putting the backup in place",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("putting the backup in place"));
+        assert_eq!(std::fs::read(current.join("level.dat")).unwrap(), b"before");
+        assert!(!previous.exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
