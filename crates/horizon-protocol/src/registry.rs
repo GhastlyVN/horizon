@@ -287,7 +287,8 @@ mod tests {
         assert!(Builtin::parse(huge).is_err());
         let sparse = r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":1},"minecraft:air":{"protocol_id":0}}}}"#;
         // Two entries but an id that would resize to a billion strings is refused.
-        let large = r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":1073741824}}}}"#;
+        let large =
+            r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":1073741824}}}}"#;
         assert!(Builtin::parse(large).is_err());
         assert!(Builtin::parse(sparse).is_ok());
     }
