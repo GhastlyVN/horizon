@@ -187,7 +187,6 @@ fn datapack_operations_refuse_a_symlinked_world_root() {
     fs::remove_dir_all(root).unwrap();
 }
 
-
 #[test]
 #[cfg(unix)]
 fn datapack_operations_refuse_a_symlinked_datapacks_directory() {
@@ -258,7 +257,6 @@ fn datapack_list_ignores_symlink_entries() {
     assert!(list(&world).is_empty());
     fs::remove_dir_all(root).unwrap();
 }
-
 
 #[test]
 fn coverage_says_what_runs() {

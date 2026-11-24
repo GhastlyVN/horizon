@@ -248,13 +248,12 @@ pub fn find(world: &Path, query: &str) -> Result<DataPack, String> {
 pub fn remove(world: &Path, pack: &DataPack) -> Result<(), String> {
     refuse_world_link(world).map_err(|e| format!("World directory: {e}"))?;
     let dir = world.join("datapacks");
-    refuse_directory_link(&dir, false)
-        .map_err(|e| format!("Datapacks directory: {e}"))?;
+    refuse_directory_link(&dir, false).map_err(|e| format!("Datapacks directory: {e}"))?;
     if pack.path.parent() != Some(dir.as_path()) {
         return Err("Pack path is outside this world's datapacks directory.".into());
     }
-    let metadata = fs::symlink_metadata(&pack.path)
-        .map_err(|e| format!("{}: {e}", pack.path.display()))?;
+    let metadata =
+        fs::symlink_metadata(&pack.path).map_err(|e| format!("{}: {e}", pack.path.display()))?;
     if is_link_or_reparse_point(&metadata) || !(metadata.is_file() || metadata.is_dir()) {
         return Err(format!(
             "{} is not a regular pack file or directory.",
