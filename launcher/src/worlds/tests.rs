@@ -125,6 +125,33 @@ fn does_not_enumerate_a_symlinked_saves_directory() {
 }
 
 #[test]
+#[cfg(unix)]
+fn world_operations_refuse_a_symlinked_saves_parent_after_listing() {
+    use std::os::unix::fs::symlink;
+
+    let home = scratch("saves-parent-replaced");
+    let outside = scratch("saves-parent-target");
+    world(&home, "Target", vec![("LevelName", name("Inside"))]);
+    let outside_world = world(&outside, "Target", vec![("LevelName", name("Outside"))]);
+    let selected = find(&home, "Target").unwrap();
+
+    let saves = home.join("saves");
+    fs::rename(&saves, home.join("saves-original")).unwrap();
+    symlink(outside.join("saves"), &saves).unwrap();
+
+    assert!(backup(&home, &selected).is_err());
+    assert!(copy(&selected).is_err());
+    assert!(delete(&selected).is_err());
+    assert!(outside_world.join("level.dat").is_file());
+    assert!(!home.join("backups").exists());
+    assert!(!outside.join("saves/Target (1)").exists());
+
+    fs::remove_file(&saves).unwrap();
+    fs::remove_dir_all(home).unwrap();
+    fs::remove_dir_all(outside).unwrap();
+}
+
+#[test]
 fn lists_what_each_world_is() {
     let home = scratch("list");
     let survival = world(

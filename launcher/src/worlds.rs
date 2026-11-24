@@ -32,6 +32,19 @@ fn is_real_directory(path: &Path) -> bool {
 
 /// Hold the same exclusive lock as the game until a filesystem operation finishes.
 fn lock_world(world: &World) -> Result<WorldLock, String> {
+    // Recheck the saves parent for every operation, not only when the world was listed.
+    // A replaced saves/ symlink would otherwise make the final world path look like a real
+    // directory while redirecting backup, copy or delete to another tree.
+    let saves = world
+        .path
+        .parent()
+        .ok_or_else(|| "A world folder has no saves directory parent.".to_owned())?;
+    if !is_real_directory(saves) {
+        return Err(format!(
+            "{} is not a real saves directory (symlinks and reparse points are refused)",
+            saves.display()
+        ));
+    }
     if !is_real_directory(&world.path) {
         return Err(format!(
             "{} is not a real world directory (symlinks and reparse points are refused)",

@@ -22,6 +22,15 @@ fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
 }
 
 fn refuse_world_link(world: &Path) -> std::io::Result<()> {
+    // World paths are children of saves/. Check that parent on every operation too:
+    // replacing saves/ with a symlink after selection must not redirect datapack writes/removal.
+    let parent = world.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} has no parent directory.", world.display()),
+        )
+    })?;
+    refuse_directory_link(parent, false)?;
     let metadata = fs::symlink_metadata(world)?;
     if is_link_or_reparse_point(&metadata) || !metadata.is_dir() {
         return Err(std::io::Error::new(
