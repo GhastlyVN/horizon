@@ -5453,7 +5453,12 @@ pub fn {f}("
             .status()
             .unwrap();
         assert!(zipped.success());
-        unpack(fs::File::open(&zip).unwrap(), "release.zip", &work.join("unpacked")).unwrap();
+        unpack(
+            fs::File::open(&zip).unwrap(),
+            "release.zip",
+            &work.join("unpacked"),
+        )
+        .unwrap();
         let new = find_app(&work.join("unpacked")).unwrap();
         replace_bundle(&new, &installed).unwrap();
         let version = fs::read_to_string(installed.join("Contents/Resources/version")).unwrap();
@@ -5522,6 +5527,8 @@ pub fn {f}("
         let new = dir.join("new");
         fs::write(&new, "verified").unwrap();
         let verified = fs::File::open(&new).unwrap();
+        // Replacing the directory entry, not the same inode, is what a path swap means.
+        fs::remove_file(&new).unwrap();
         fs::write(&new, "swapped").unwrap();
 
         replace_binary(verified, &exe).unwrap();
