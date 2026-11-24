@@ -25,7 +25,8 @@ impl Ids {
         let ids = names
             .iter()
             .enumerate()
-            .map(|(i, n)| (n.clone(), i as i32))
+            .filter(|(_, name)| !name.is_empty())
+            .map(|(i, name)| (name.clone(), i as i32))
             .collect();
         Self { names, ids }
     }
@@ -34,6 +35,7 @@ impl Ids {
             .ok()
             .and_then(|i| self.names.get(i))
             .map(String::as_str)
+            .filter(|name| !name.is_empty())
     }
     pub fn id(&self, name: &str) -> Option<i32> {
         self.ids.get(name).copied()
@@ -340,6 +342,7 @@ mod tests {
         let items = parsed.get("minecraft:item").unwrap();
         assert_eq!(items.name(50), Some("minecraft:stone"));
         assert_eq!(items.name(1), None);
+        assert_eq!(items.id(""), None);
 
         // A sparse id beyond the bounded allocation budget is still refused.
         let large =
