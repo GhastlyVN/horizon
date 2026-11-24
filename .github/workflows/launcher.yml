@@ -93,7 +93,7 @@ jobs:
       version: ${{ steps.decide.outputs.version }}
       dry_run: ${{ steps.mode.outputs.dry_run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - id: mode
@@ -172,7 +172,7 @@ jobs:
         working-directory: launcher
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.decide.outputs.head }}
           persist-credentials: false
@@ -355,7 +355,7 @@ jobs:
     # tools/ci/sign_release.sh, which calls only the runner's sha256sum and OpenSSL (docs/release-flow.md).
     environment: ${{ needs.decide.outputs.dry_run != 'true' && 'release' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           sparse-checkout: tools/ci/sign_release.sh
           sparse-checkout-cone-mode: false
@@ -392,7 +392,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Notes
