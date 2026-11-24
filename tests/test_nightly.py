@@ -185,6 +185,17 @@ class PruneBuildsTests(unittest.TestCase):
         self.assertIn('"dist/horizon-source.tar.gz#Source of this Nightly', publish)
         self.assertIn('nightly.py keep-source "$SHA" "$DATE"', publish)
 
+    def test_nightlies_publish_the_exact_version_signature(self):
+        build = (WORKFLOWS / "nightly-build.yml").read_text()
+        sign = build.split("\n  sign:", 1)[1].split("\n  publish:", 1)[0]
+        self.assertIn(
+            "NIGHTLY_VERSION: nightly-${{ needs.pick.outputs.date }}-${{ needs.pick.outputs.short }}",
+            sign,
+        )
+        publish = build.split("\n  publish:", 1)[1].split("\n  answer:", 1)[0]
+        self.assertIn('--nightly-version "$NIGHTLY_VERSION"', publish)
+        self.assertIn("signature+=(dist/SHA256SUMS.v2.sig)", publish)
+
     def test_the_workflow_prunes_on_schedule_only(self):
         build = (WORKFLOWS / "nightly-build.yml").read_text()
         step = build.split("Old nightly/build-* branches deleted", 1)[1].split("- uses:", 1)[0]
