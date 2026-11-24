@@ -8,6 +8,28 @@ use std::path::{Path, PathBuf};
 
 const SETTINGS: &str = "datapacks.json";
 
+fn refuse_link(path: &Path) -> std::io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "{} is a link; refusing to write through it.",
+                path.display()
+            ),
+        )),
+        Ok(metadata) if !metadata.file_type().is_file() => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "{} is not a regular file; refusing to write to it.",
+                path.display()
+            ),
+        )),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DataPack {
     /// Its file or folder name in `datapacks/`; the game's id is `file/<name>`.
@@ -132,7 +154,9 @@ fn forget(world: &Path, file: &str) -> Result<(), String> {
         return Ok(());
     }
     let text = serde_json::to_string_pretty(&s).unwrap();
-    fs::write(world.join(SETTINGS), text).map_err(|e| format!("{SETTINGS}: {e}"))
+    let path = world.join(SETTINGS);
+    refuse_link(&path).map_err(|e| format!("{SETTINGS}: {e}"))?;
+    fs::write(&path, text).map_err(|e| format!("{SETTINGS}: {e}"))
 }
 
 /// The data pack a command names: its file name, with or without `.zip`.
