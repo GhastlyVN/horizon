@@ -83,12 +83,13 @@ impl Builtin {
             for (entry, value) in entries {
                 let id = value["protocol_id"]
                     .as_u64()
-                    .ok_or_else(|| Error::new(format!("{entry}: no protocol_id")))?
-                    as usize;
-                if id >= names.len() {
-                    names.resize(id + 1, String::new());
+                    .ok_or_else(|| Error::new(format!("{entry}: no protocol_id")))?;
+                if id >= names.len() as u64 {
+                    return Err(Error::new(format!(
+                        "{entry}: protocol_id {id} is outside the registry"
+                    )));
                 }
-                names[id] = entry.clone();
+                names[id as usize] = entry.clone();
             }
             registries.insert(name.clone(), Ids::from_names(names));
         }
@@ -278,6 +279,17 @@ mod tests {
         assert_eq!(items.name(1), Some("minecraft:stone"));
         assert_eq!(items.id("minecraft:air"), Some(0));
         assert_eq!(items.name(2), None);
+    }
+
+    #[test]
+    fn rejects_out_of_range_protocol_ids_without_allocating() {
+        let huge = r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":18446744073709551615}}}}"#;
+        assert!(Builtin::parse(huge).is_err());
+        let sparse = r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":1},"minecraft:air":{"protocol_id":0}}}}"#;
+        // Two entries but an id that would resize to a billion strings is refused.
+        let large = r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":1073741824}}}}"#;
+        assert!(Builtin::parse(large).is_err());
+        assert!(Builtin::parse(sparse).is_ok());
     }
 
     #[test]
