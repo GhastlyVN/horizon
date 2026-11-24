@@ -492,6 +492,10 @@ mod tests {
         assert_eq!(pack.curseforge_files, 2);
         assert_eq!(pack.files.len(), 1);
         assert_eq!(pack.files[0].path, "mods/mcw-doors-1.1.2.jar");
+        assert_eq!(pack.overrides["config"], 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn rejects_oversized_metadata_before_parsing() {
         use std::io::Write;
