@@ -83,7 +83,6 @@ fn backup_and_copy_refuse_symlinks_inside_the_world() {
     fs::remove_dir_all(home).unwrap();
 }
 
-
 #[test]
 #[cfg(unix)]
 fn symlinked_world_roots_are_not_listed_or_operated_on() {
@@ -124,7 +123,6 @@ fn does_not_enumerate_a_symlinked_saves_directory() {
     fs::remove_dir_all(home).unwrap();
     fs::remove_dir_all(outside).unwrap();
 }
-
 
 #[test]
 fn lists_what_each_world_is() {

@@ -131,7 +131,6 @@ fn lists_adds_and_removes_as_the_game_reads_them() {
     fs::remove_dir_all(&root).unwrap();
 }
 
-
 #[test]
 #[cfg(unix)]
 fn datapack_operations_refuse_a_symlinked_world_root() {
@@ -157,22 +156,33 @@ fn datapack_operations_refuse_a_symlinked_world_root() {
     );
 
     assert!(list(&world_alias).is_empty());
-    assert!(add(&world_alias, &source).unwrap_err().contains("real world directory"));
-    assert!(forget(&world_alias, "Old.zip").unwrap_err().contains("real world directory"));
+    assert!(
+        add(&world_alias, &source)
+            .unwrap_err()
+            .contains("real world directory")
+    );
+    assert!(
+        forget(&world_alias, "Old.zip")
+            .unwrap_err()
+            .contains("real world directory")
+    );
     let pack = DataPack {
         file: "Old.zip".into(),
         path: old_pack.clone(),
         description: String::new(),
         enabled: false,
     };
-    assert!(remove(&world_alias, &pack).unwrap_err().contains("real world directory"));
+    assert!(
+        remove(&world_alias, &pack)
+            .unwrap_err()
+            .contains("real world directory")
+    );
     assert_eq!(fs::read_to_string(real_world.join(SETTINGS)).unwrap(), original);
     assert!(old_pack.is_file());
     assert!(!real_world.join("datapacks/New.zip").exists());
 
     fs::remove_dir_all(root).unwrap();
 }
-
 
 #[test]
 fn coverage_says_what_runs() {
