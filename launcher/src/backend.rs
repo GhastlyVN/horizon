@@ -3,7 +3,7 @@
 //! block; the GUI runs them on threads and reads their messages.
 use crate::{account, mojang, sources};
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Sender;
@@ -908,7 +908,7 @@ pub(crate) fn download(
     sha256: &str,
     to: &Path,
     progress: &impl Fn(f32),
-) -> Result<(), String> {
+) -> Result<fs::File, String> {
     let response = get(url)?;
     let size = match size {
         0 => response
@@ -920,7 +920,12 @@ pub(crate) fn download(
     let cap = crate::browser::download::MAX;
     let limit = if size > 0 { size.min(cap) } else { cap };
     let mut reader = response.into_reader();
-    let mut file = fs::File::create(to).map_err(|e| e.to_string())?;
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(to)
+        .map_err(|e| e.to_string())?;
     let mut hash = horizon_release_sign::Sha256::default();
     let (mut done, mut buf) = (0u64, vec![0u8; 1 << 16]);
     loop {
@@ -944,17 +949,20 @@ pub(crate) fn download(
     let name = url.rsplit('/').next().unwrap_or(url);
     horizon_release_sign::check(name, sha256, &hash.hex()).inspect_err(|_| {
         let _ = fs::remove_file(to);
+    })?;
+    file.seek(SeekFrom::Start(0)).map_err(|e| {
+        let _ = fs::remove_file(to);
+        e.to_string()
     })
 }
 
-fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
-    let file = fs::File::open(archive).map_err(|e| e.to_string())?;
+fn unpack(archive: fs::File, url: &str, to: &Path) -> Result<(), String> {
     if url.ends_with(".tar.gz") {
-        tar::Archive::new(flate2::read::GzDecoder::new(file))
+        tar::Archive::new(flate2::read::GzDecoder::new(archive))
             .unpack(to)
             .map_err(|e| e.to_string())
     } else {
-        zip::ZipArchive::new(file)
+        zip::ZipArchive::new(archive)
             .and_then(|mut z| z.extract(to))
             .map_err(|e| e.to_string())
     }
@@ -996,9 +1004,9 @@ pub(crate) fn install_as(
     let _ = fs::remove_dir_all(&partial);
     fs::create_dir_all(&partial).map_err(|e| e.to_string())?;
     let archive = partial.join("download");
-    download(&url, size, sha256, &archive, &progress)?;
+    let verified = download(&url, size, sha256, &archive, &progress)?;
     let unpacked = partial.join("unpacked");
-    unpack(&archive, &url, &unpacked)?;
+    unpack(verified, &url, &unpacked)?;
     progress(0.97);
     // The archives hold one top folder (horizon-linux-x86_64/...); the version folder is its contents.
     let entries: Vec<_> = fs::read_dir(&unpacked)
@@ -3179,7 +3187,7 @@ pub fn self_update(release: &Release, progress: impl Fn(f32)) -> Result<(), Stri
     let _ = fs::remove_dir_all(&work);
     fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let archive = work.join("download");
-    download(&url, size, &sha256, &archive, &progress)?;
+    let verified = download(&url, size, &sha256, &archive, &progress)?;
     // An AppImage is the whole program: the new one takes the place of the file `$APPIMAGE` names
     // (the running mount keeps its copy until `restart` starts it). Its archive is not a `.tar.gz`
     // to unpack, so this comes before the unpacking below.
@@ -3190,7 +3198,7 @@ pub fn self_update(release: &Release, progress: impl Fn(f32)) -> Result<(), Stri
                 release.tag
             ));
         }
-        replace_binary(&archive, &appimage).map_err(|e| {
+        replace_binary(verified, &appimage).map_err(|e| {
             format!(
                 "Could not replace the AppImage at {}: {e}",
                 appimage.display()
@@ -3201,7 +3209,7 @@ pub fn self_update(release: &Release, progress: impl Fn(f32)) -> Result<(), Stri
         return Ok(());
     }
     let unpacked = work.join("unpacked");
-    unpack(&archive, &url, &unpacked)?;
+    unpack(verified, &url, &unpacked)?;
     // A launcher inside Horizon.app replaces the whole bundle (its Info.plist, icon and
     // signature belong with the binary); a bare binary, as older launchers are, only the binary,
     // which the macOS archive also holds (Horizon.app/Contents/MacOS/horizon-launcher).
