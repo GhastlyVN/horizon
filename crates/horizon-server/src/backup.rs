@@ -198,16 +198,13 @@ fn put_restored_path_in_place(
     description: &str,
 ) -> Result<(), String> {
     if let Err(error) = std::fs::rename(restored, current) {
-        match moved {
-            Some(previous) => {
-                if let Err(rollback) = std::fs::rename(previous, current) {
-                    return Err(format!(
-                        "{description}: {error}; rollback failed: {rollback}; previous world remains at {}",
-                        previous.display()
-                    ));
-                }
-            }
-            None => {}
+        if let Some(previous) = moved {
+            std::fs::rename(previous, current).map_err(|rollback| {
+                format!(
+                    "{description}: {error}; rollback failed: {rollback}; previous world remains at {}",
+                    previous.display()
+                )
+            })?;
         }
         return Err(format!("{description}: {error}"));
     }
@@ -275,24 +272,24 @@ pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf
     let cleanup = std::fs::remove_dir_all(&scratch);
     match result {
         Ok(value) => {
-            match cleanup {
-                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                    return Err(format!(
-                        "backup restore completed, but temporary extraction cleanup failed: {error}"
-                    ));
-                }
-                _ => {}
+            if let Some(error) = cleanup
+                .err()
+                .filter(|error| error.kind() != std::io::ErrorKind::NotFound)
+            {
+                return Err(format!(
+                    "backup restore completed, but temporary extraction cleanup failed: {error}"
+                ));
             }
             Ok(value)
         }
         Err(error) => {
-            match cleanup {
-                Err(cleanup) if cleanup.kind() != std::io::ErrorKind::NotFound => {
-                    return Err(format!(
-                        "{error}; temporary extraction cleanup failed: {cleanup}"
-                    ));
-                }
-                _ => {}
+            if let Some(cleanup) = cleanup
+                .err()
+                .filter(|cleanup| cleanup.kind() != std::io::ErrorKind::NotFound)
+            {
+                return Err(format!(
+                    "{error}; temporary extraction cleanup failed: {cleanup}"
+                ));
             }
             Err(error)
         }
