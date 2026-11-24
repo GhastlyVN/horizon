@@ -12,6 +12,8 @@ use std::{
 /// How long `start` waits for the game's `Done`, and `stop` for the server to end.
 const START_TIMEOUT: Duration = Duration::from_secs(300);
 const STOP_TIMEOUT: Duration = Duration::from_secs(180);
+/// A log can grow without bound; logs -n only ever needs its last megabyte.
+const LOG_TAIL_BYTES: u64 = 1024 * 1024;
 
 fn running(dir: &Path) -> Result<Client, String> {
     Client::open(dir)?.ok_or_else(|| format!("no server is running in {}", dir.display()))
@@ -579,6 +581,32 @@ pub fn restore(dir: &Path, name: &str, dimension: Option<&str>, yes: bool) -> Re
     Ok(())
 }
 
+/// Read only the end of a log, never the whole file, for `logs -n`.
+fn tail_lines(path: &Path, count: usize, max_bytes: u64) -> Result<Vec<String>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let size = file
+        .metadata()
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .len();
+    let start = size.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut bytes = vec![0u8; (size - start) as usize];
+    file.read_exact(&mut bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<&str> = text.lines().collect();
+    // The window starts mid-line; that prefix is not a complete log line.
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+    let from = lines.len().saturating_sub(count);
+    Ok(lines[from..]
+        .iter()
+        .map(|line| (*line).to_owned())
+        .collect())
+}
 /// `logs [-f] [-n N]`: the last lines, from the running server or else from logs/latest.log.
 pub fn logs(dir: &Path, follow: bool, count: usize) -> Result<(), String> {
     let Some(client) = Client::open(dir)? else {
@@ -586,10 +614,7 @@ pub fn logs(dir: &Path, follow: bool, count: usize) -> Result<(), String> {
             return Err("no server is running to follow".into());
         }
         let path = dir.join("logs/latest.log");
-        let text =
-            std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let lines: Vec<&str> = text.lines().collect();
-        for line in &lines[lines.len().saturating_sub(count)..] {
+        for line in tail_lines(&path, count, LOG_TAIL_BYTES)? {
             println!("{line}");
         }
         return Ok(());
@@ -621,6 +646,24 @@ pub fn logs(dir: &Path, follow: bool, count: usize) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn tail_lines_reads_only_the_requested_window() {
+        let dir = std::env::temp_dir().join(format!("horizon-log-tail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("latest.log");
+        let mut text = String::new();
+        for i in 0..20_000 {
+            text.push_str(&format!("older line {i}\n"));
+        }
+        text.push_str("final one\nfinal two\n");
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(
+            tail_lines(&path, 2, 64).unwrap(),
+            vec!["final one", "final two"]
+        );
+        assert_eq!(tail_lines(&path, 2, 20).unwrap(), vec!["final two"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     #[test]
     fn status_reads_well() {
         let status = json!({
