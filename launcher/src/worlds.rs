@@ -11,8 +11,46 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// The lock a running game holds on a world; vanilla's backups leave it out.
 const LOCK: &str = "session.lock";
 
+/// Reject world roots that resolve through a symlink or Windows reparse point.
+fn is_link_or_reparse_point(metadata: &fs::Metadata) -> bool {
+    let symlink = metadata.file_type().is_symlink();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        symlink || metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        symlink
+    }
+}
+
+fn is_real_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .is_ok_and(|metadata| !is_link_or_reparse_point(&metadata) && metadata.is_dir())
+}
+
 /// Hold the same exclusive lock as the game until a filesystem operation finishes.
 fn lock_world(world: &World) -> Result<WorldLock, String> {
+    // Recheck the saves parent for every operation, not only when the world was listed.
+    // A replaced saves/ symlink would otherwise make the final world path look like a real
+    // directory while redirecting backup, copy or delete to another tree.
+    let saves = world
+        .path
+        .parent()
+        .ok_or_else(|| "A world folder has no saves directory parent.".to_owned())?;
+    if !is_real_directory(saves) {
+        return Err(format!(
+            "{} is not a real saves directory (symlinks and reparse points are refused)",
+            saves.display()
+        ));
+    }
+    if !is_real_directory(&world.path) {
+        return Err(format!(
+            "{} is not a real world directory (symlinks and reparse points are refused)",
+            world.path.display()
+        ));
+    }
     let lock = fs::File::options()
         .write(true)
         .create(true)
@@ -55,7 +93,11 @@ pub struct World {
 
 /// The worlds in a game folder's `saves/`, the last played first.
 pub fn list(home: &Path) -> Vec<World> {
-    let mut worlds: Vec<World> = fs::read_dir(home.join("saves"))
+    let saves = home.join("saves");
+    if !is_real_directory(&saves) {
+        return Vec::new();
+    }
+    let mut worlds: Vec<World> = fs::read_dir(saves)
         .into_iter()
         .flatten()
         .flatten()
@@ -80,6 +122,9 @@ fn level_dat(path: &Path) -> Option<Tag> {
 }
 
 fn read(path: &Path) -> Option<World> {
+    if !is_real_directory(path) {
+        return None;
+    }
     let dat = path.join("level.dat");
     let changed = fs::metadata(&dat).and_then(|m| m.modified()).ok()?;
     let folder = path.file_name()?.to_string_lossy().into_owned();

@@ -132,6 +132,199 @@ fn lists_adds_and_removes_as_the_game_reads_them() {
 }
 
 #[test]
+#[cfg(unix)]
+fn datapack_operations_refuse_a_symlinked_world_root() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("world-root-link");
+    let real_world = root.join("real-world");
+    fs::create_dir_all(real_world.join("datapacks")).unwrap();
+    let original = r#"{"disabled":["file/Old.zip"]}"#;
+    fs::write(real_world.join(SETTINGS), original).unwrap();
+    let old_pack = real_world.join("datapacks/Old.zip");
+    zip_file(
+        &old_pack,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say hi"),
+        ],
+    );
+    let world_alias = root.join("world");
+    symlink(&real_world, &world_alias).unwrap();
+
+    let source = root.join("New.zip");
+    zip_file(
+        &source,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/b.mcfunction", "say bye"),
+        ],
+    );
+
+    assert!(list(&world_alias).is_empty());
+    assert!(add(&world_alias, &source)
+        .unwrap_err()
+        .contains("real world directory"));
+    assert!(forget(&world_alias, "Old.zip")
+        .unwrap_err()
+        .contains("real world directory"));
+    let pack = DataPack {
+        file: "Old.zip".into(),
+        path: old_pack.clone(),
+        description: String::new(),
+        enabled: false,
+    };
+    assert!(remove(&world_alias, &pack)
+        .unwrap_err()
+        .contains("real world directory"));
+    assert_eq!(
+        fs::read_to_string(real_world.join(SETTINGS)).unwrap(),
+        original
+    );
+    assert!(old_pack.is_file());
+    assert!(!real_world.join("datapacks/New.zip").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn datapack_operations_refuse_a_symlinked_saves_parent_after_world_selection() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("saves-parent-replaced");
+    let home = root.join("home");
+    let outside = root.join("outside");
+    let world = home.join("saves/Target");
+    let outside_world = outside.join("saves/Target");
+    let original = r#"{"disabled":["file/Old.zip"]}"#;
+
+    zip_file(
+        &world.join("datapacks/Old.zip"),
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say hi"),
+        ],
+    );
+    fs::write(world.join(SETTINGS), original).unwrap();
+    let selected_pack = find(&world, "Old").unwrap();
+
+    let outside_pack = outside_world.join("datapacks/Old.zip");
+    zip_file(
+        &outside_pack,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say outside"),
+        ],
+    );
+    fs::write(outside_world.join(SETTINGS), original).unwrap();
+
+    let source = root.join("New.zip");
+    zip_file(
+        &source,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/b.mcfunction", "say new"),
+        ],
+    );
+
+    let saves = home.join("saves");
+    fs::rename(&saves, home.join("saves-original")).unwrap();
+    symlink(outside.join("saves"), &saves).unwrap();
+
+    assert!(list(&world).is_empty());
+    assert!(add(&world, &source)
+        .unwrap_err()
+        .contains("World directory"));
+    assert!(forget(&world, "Old.zip")
+        .unwrap_err()
+        .contains("World directory"));
+    assert!(remove(&world, &selected_pack)
+        .unwrap_err()
+        .contains("World directory"));
+    assert!(outside_pack.is_file());
+    assert_eq!(
+        fs::read_to_string(outside_world.join(SETTINGS)).unwrap(),
+        original
+    );
+    assert!(!outside_world.join("datapacks/New.zip").exists());
+
+    fs::remove_file(&saves).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn datapack_operations_refuse_a_symlinked_datapacks_directory() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("datapacks-directory-link");
+    let world = root.join("world");
+    let outside = root.join("outside");
+    fs::create_dir_all(&world).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let old_pack = outside.join("Old.zip");
+    zip_file(
+        &old_pack,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say hi"),
+        ],
+    );
+    symlink(&outside, world.join("datapacks")).unwrap();
+
+    let source = root.join("New.zip");
+    zip_file(
+        &source,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/b.mcfunction", "say bye"),
+        ],
+    );
+    let forged_pack = DataPack {
+        file: "Old.zip".into(),
+        path: world.join("datapacks/Old.zip"),
+        description: String::new(),
+        enabled: true,
+    };
+
+    assert!(list(&world).is_empty());
+    assert!(add(&world, &source)
+        .unwrap_err()
+        .contains("Datapacks directory"));
+    assert!(remove(&world, &forged_pack)
+        .unwrap_err()
+        .contains("Datapacks directory"));
+    assert!(old_pack.is_file());
+    assert!(!outside.join("New.zip").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn datapack_list_ignores_symlink_entries() {
+    use std::os::unix::fs::symlink;
+
+    let root = scratch("datapack-entry-link");
+    let world = root.join("world");
+    let dir = world.join("datapacks");
+    fs::create_dir_all(&dir).unwrap();
+    let outside = root.join("Outside.zip");
+    zip_file(
+        &outside,
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say hi"),
+        ],
+    );
+    symlink(&outside, dir.join("Linked.zip")).unwrap();
+
+    assert!(list(&world).is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn coverage_says_what_runs() {
     let root = scratch("coverage");
     let file = root.join("p.zip");
