@@ -201,7 +201,10 @@ fn datapack_operations_refuse_a_symlinked_saves_parent_after_world_selection() {
 
     zip_file(
         &world.join("datapacks/Old.zip"),
-        &[("pack.mcmeta", META), ("data/t/function/a.mcfunction", "say hi")],
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say hi"),
+        ],
     );
     fs::write(world.join(SETTINGS), original).unwrap();
     let selected_pack = find(&world, "Old").unwrap();
@@ -209,14 +212,20 @@ fn datapack_operations_refuse_a_symlinked_saves_parent_after_world_selection() {
     let outside_pack = outside_world.join("datapacks/Old.zip");
     zip_file(
         &outside_pack,
-        &[("pack.mcmeta", META), ("data/t/function/a.mcfunction", "say outside")],
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/a.mcfunction", "say outside"),
+        ],
     );
     fs::write(outside_world.join(SETTINGS), original).unwrap();
 
     let source = root.join("New.zip");
     zip_file(
         &source,
-        &[("pack.mcmeta", META), ("data/t/function/b.mcfunction", "say new")],
+        &[
+            ("pack.mcmeta", META),
+            ("data/t/function/b.mcfunction", "say new"),
+        ],
     );
 
     let saves = home.join("saves");
@@ -234,7 +243,10 @@ fn datapack_operations_refuse_a_symlinked_saves_parent_after_world_selection() {
         .unwrap_err()
         .contains("World directory"));
     assert!(outside_pack.is_file());
-    assert_eq!(fs::read_to_string(outside_world.join(SETTINGS)).unwrap(), original);
+    assert_eq!(
+        fs::read_to_string(outside_world.join(SETTINGS)).unwrap(),
+        original
+    );
     assert!(!outside_world.join("datapacks/New.zip").exists());
 
     fs::remove_file(&saves).unwrap();
