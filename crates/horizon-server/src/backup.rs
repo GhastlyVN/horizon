@@ -199,9 +199,23 @@ pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let file = File::open(&zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
-    ZipArchive::new(file)
-        .and_then(|mut z| z.extract(&scratch))
-        .map_err(|e| format!("{name}: {e}"))?;
+    let mut zip = ZipArchive::new(file).map_err(|e| format!("{name}: {e}"))?;
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).map_err(|e| format!("{name}: {e}"))?;
+        let Some(inner) = entry.enclosed_name() else {
+            return Err(format!("{name}: ZIP entry escapes the backup: {}", entry.name()));
+        };
+        let out = scratch.join(&inner);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out).map_err(|e| format!("{name}: {e}"))?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{name}: {e}"))?;
+        }
+        let mut dest = File::create(&out).map_err(|e| format!("{name}: {e}"))?;
+        std::io::copy(&mut entry, &mut dest).map_err(|e| format!("{name}: {e}"))?;
+    }
     let world = &config.world.name;
     let restored = scratch.join(world);
     if !restored.join("level.dat").is_file() {
@@ -446,6 +460,30 @@ mod tests {
         );
         assert_eq!(find(&dir, "auto").unwrap(), left[0]);
         assert!(find(&dir, "nothing").is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn restore_refuses_zip_slip_entry() {
+        let dir = std::env::temp_dir().join(format!("horizon-server-zipslip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = Config::default();
+        let world = dir.join("world");
+        std::fs::create_dir_all(&world).unwrap();
+        std::fs::write(world.join("level.dat"), b"before").unwrap();
+        std::fs::write(dir.join("server.toml"), crate::config::TEMPLATE).unwrap();
+        std::fs::create_dir_all(dir.join("backups")).unwrap();
+        let zip_path = dir.join("backups").join("manual.zip");
+        let f = std::fs::File::create(&zip_path).unwrap();
+        let mut w = ZipWriter::new(std::io::BufWriter::new(f));
+        w.start_file("world/level.dat", SimpleFileOptions::default()).unwrap();
+        w.write_all(b"before").unwrap();
+        w.start_file("../../escape.txt", SimpleFileOptions::default()).unwrap();
+        w.write_all(b"pwned").unwrap();
+        w.finish().unwrap().into_inner().sync_all().unwrap();
+        let result = restore(&dir, &config, "manual.zip");
+        assert!(result.is_err(), "zip-slip entry must be refused: {:?}", result.err());
+        assert!(!dir.join("escape.txt").exists(), "no file outside the scratch dir");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
