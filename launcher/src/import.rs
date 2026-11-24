@@ -23,6 +23,18 @@ use std::path::{Component, Path, PathBuf};
 const INDEX: &str = "modrinth.index.json";
 /// The `.mrpack` folders copied into the game folder; `server-overrides/` is a server's.
 const OVERRIDES: [&str; 2] = ["overrides/", "client-overrides/"];
+/// Bounds how much a member of an untrusted zip may expand to on import.
+const MAX_MEMBER: u64 = 1 << 30;
+
+fn checked_member_size(size: u64, to: &Path) -> Result<(), String> {
+    if size > MAX_MEMBER {
+        return Err(format!(
+            "{}: archive member exceeds the import size limit ({MAX_MEMBER} bytes)",
+            to.display()
+        ));
+    }
+    Ok(())
+}
 
 /// What a dropped file is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,6 +208,7 @@ fn fill(
         let Some(to) = target(home, &relative) else {
             continue;
         };
+        checked_member_size(entry.size(), &to)?;
         if to.symlink_metadata().is_ok() {
             return Err(format!(
                 "{} is a link; refusing to import through it.",
@@ -204,7 +217,15 @@ fn fill(
         }
         fs::create_dir_all(to.parent().expect("inside home")).map_err(|e| e.to_string())?;
         let mut out = fs::File::create(&to).map_err(|e| format!("{}: {e}", to.display()))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| format!("{}: {e}", to.display()))?;
+        // The declared size can lie; cap the bytes actually read too.
+        let copied = std::io::copy(&mut (&mut entry).take(MAX_MEMBER + 1), &mut out)
+            .map_err(|e| format!("{}: {e}", to.display()))?;
+        if copied > MAX_MEMBER {
+            return Err(format!(
+                "{}: archive member exceeds the import size limit ({MAX_MEMBER} bytes)",
+                to.display()
+            ));
+        }
         progress(
             &format!("Copying {relative}"),
             (i + 1) as f32 / count as f32,

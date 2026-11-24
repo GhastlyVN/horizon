@@ -887,6 +887,19 @@ fn launcher_signed_digest(tag: &str, asset: &str) -> Result<String, String> {
     )
 }
 
+/// Bounds the bytes accepted for a release asset; `limit` is the signed size when known.
+fn checked_download_total(done: u64, chunk: usize, limit: u64) -> Result<u64, String> {
+    let next = done
+        .checked_add(chunk as u64)
+        .ok_or_else(|| "Download exceeded the size limit".to_string())?;
+    if next > limit {
+        return Err(format!(
+            "Download exceeded its expected size ({limit} bytes)"
+        ));
+    }
+    Ok(next)
+}
+
 /// Downloads `url` into `to`; the file is kept only if its SHA-256 is `sha256`, the signed (or
 /// pinned) one. A `size` of 0 takes the server's Content-Length for the progress.
 pub(crate) fn download(
@@ -904,6 +917,8 @@ pub(crate) fn download(
             .unwrap_or(0),
         n => n,
     };
+    let cap = crate::browser::download::MAX;
+    let limit = if size > 0 { size.min(cap) } else { cap };
     let mut reader = response.into_reader();
     let mut file = fs::File::create(to).map_err(|e| e.to_string())?;
     let mut hash = horizon_release_sign::Sha256::default();
@@ -915,9 +930,15 @@ pub(crate) fn download(
         if n == 0 {
             break;
         }
+        done = match checked_download_total(done, n, limit) {
+            Ok(next) => next,
+            Err(error) => {
+                let _ = fs::remove_file(to);
+                return Err(error);
+            }
+        };
         hash.update(&buf[..n]);
         file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-        done += n as u64;
         progress((done as f32 / size.max(1) as f32).min(1.0) * 0.9);
     }
     let name = url.rsplit('/').next().unwrap_or(url);
@@ -3703,6 +3724,13 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
+
+    #[test]
+    fn download_total_is_bounded_by_expected_size() {
+        assert_eq!(checked_download_total(10, 5, 15).unwrap(), 15);
+        assert!(checked_download_total(10, 6, 15).is_err());
+        assert!(checked_download_total(u64::MAX, 1, u64::MAX).is_err());
+    }
 
     /// A proxy or GitHub briefly answering 502/503/504 is asked again, and the later answer used.
     #[test]

@@ -41,7 +41,7 @@ pub fn github_release_asset(url: &str) -> bool {
 }
 
 /// Bigger than any pack these sources serve (Modrinth caps uploads at 500 MiB).
-const MAX: u64 = 1 << 30;
+pub(crate) const MAX: u64 = 1 << 30;
 
 /// The HTTP agent the sources share, reaching `url` through the player's proxy when one is set
 /// (`proxy`). Modrinth asks for a user agent that names the project.
