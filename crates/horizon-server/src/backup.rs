@@ -204,7 +204,7 @@ pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf
         let mut entry = zip.by_index(i).map_err(|e| format!("{name}: {e}"))?;
         let Some(inner) = entry.enclosed_name() else {
             return Err(format!(
-                "{name}: ZIP entry escapes the backup: {}",
+                "{name}: ZIP entry escapes the backup: {:?}",
                 entry.name()
             ));
         };
@@ -486,7 +486,7 @@ mod tests {
         w.start_file("../../escape.txt", SimpleFileOptions::default())
             .unwrap();
         w.write_all(b"pwned").unwrap();
-        w.finish().unwrap().into_inner().sync_all().unwrap();
+        w.finish().unwrap().into_inner().unwrap().sync_all().unwrap();
         let result = restore(&dir, &config, "manual.zip");
         assert!(
             result.is_err(),
