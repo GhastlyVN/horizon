@@ -333,7 +333,7 @@ fn join_server_once(session: &AuthSession, server_hash: &str) -> Result<(), Join
 
 fn join_ely_server_once(session: &AuthSession, server_hash: &str) -> Result<(), JoinError> {
     match agent()
-        .post("https://authserver.ely.by/session/join")
+        .post("https://account.ely.by/session/join")
         .set("Content-Type", "application/json; charset=utf-8")
         .send_string(&join_request(session, server_hash))
     {
