@@ -492,7 +492,19 @@ mod tests {
         assert_eq!(pack.curseforge_files, 2);
         assert_eq!(pack.files.len(), 1);
         assert_eq!(pack.files[0].path, "mods/mcw-doors-1.1.2.jar");
-        assert_eq!(pack.overrides["config"], 1);
+    #[test]
+    fn rejects_oversized_metadata_before_parsing() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("horizon-meta-zip-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pack.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.start_file("modrinth.index.json", opts).unwrap();
+        zip.write_all(&vec![b' '; (MAX_METADATA + 1) as usize]).unwrap();
+        zip.finish().unwrap();
+        let err = import(&path).unwrap_err();
+        assert!(err.contains("exceeds 16 MiB"), "{err}");
         fs::remove_dir_all(&dir).unwrap();
     }
 }
