@@ -585,11 +585,16 @@ pub fn restore(dir: &Path, name: &str, dimension: Option<&str>, yes: bool) -> Re
 fn tail_lines(path: &Path, count: usize, max_bytes: u64) -> Result<Vec<String>, String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let size = file.metadata().map_err(|e| format!("{}: {e}", path.display()))?.len();
+    let size = file
+        .metadata()
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .len();
     let start = size.saturating_sub(max_bytes);
-    file.seek(SeekFrom::Start(start)).map_err(|e| format!("{}: {e}", path.display()))?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     let mut bytes = vec![0u8; (size - start) as usize];
-    file.read_exact(&mut bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    file.read_exact(&mut bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     let text = String::from_utf8_lossy(&bytes);
     let mut lines: Vec<&str> = text.lines().collect();
     // The window starts mid-line; that prefix is not a complete log line.
