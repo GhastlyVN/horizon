@@ -111,13 +111,6 @@ impl SingleInstance {
     }
 }
 
-impl Drop for SingleInstance {
-    fn drop(&mut self) {
-        // Release the single-instance lock.
-        self.inner.release();
-    }
-}
-
 /// Whether a process with `pid` is still alive.
 #[cfg(unix)]
 fn process_alive(pid: u32) -> bool {
