@@ -228,3 +228,10 @@ fn an_import_does_not_write_through_a_dangling_link() {
     assert!(!home.exists());
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn import_size_limit_rejects_oversized_members() {
+    let path = Path::new("options.txt");
+    assert!(checked_member_size(MAX_MEMBER, path).is_ok());
+    assert!(checked_member_size(MAX_MEMBER + 1, path).is_err());
+}
