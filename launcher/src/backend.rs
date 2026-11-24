@@ -5452,7 +5452,7 @@ pub fn {f}("
             .status()
             .unwrap();
         assert!(zipped.success());
-        unpack(&zip, "release.zip", &work.join("unpacked")).unwrap();
+        unpack(fs::File::open(&zip).unwrap(), "release.zip", &work.join("unpacked")).unwrap();
         let new = find_app(&work.join("unpacked")).unwrap();
         replace_bundle(&new, &installed).unwrap();
         let version = fs::read_to_string(installed.join("Contents/Resources/version")).unwrap();
