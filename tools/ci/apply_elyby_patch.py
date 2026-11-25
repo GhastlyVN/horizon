@@ -167,12 +167,22 @@ fn join_ely_server_once(session: &AuthSession, server_hash: &str) -> Result<(), 
 def patch_skins(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     helpers = r'''
+/// Ely.by's JSON still names storage files with `http://ely.by/...`; upgrade
+/// only that exact host so the downloader never makes a plaintext request.
+fn secure_ely_url(url: &str) -> String {
+    url.replacen("http://ely.by/", "https://ely.by/", 1)
+}
+
 /// Read Ely.by's Mojang-compatible /profile/{nickname} GameProfile response.
 pub fn ely_profile_textures(profile: &serde_json::Value) -> Textures {
-    const ELY_TEXTURE_URIS: [&str; 4] = [
+    const ELY_TEXTURE_URIS: [&str; 8] = [
+        "http://ely.by/storage/skins/",
         "https://ely.by/storage/skins/",
+        "http://ely.by/storage/cloaks/",
         "https://ely.by/storage/cloaks/",
+        "http://ely.by/minecraft/skins/",
         "https://ely.by/minecraft/skins/",
+        "http://ely.by/minecraft/cloaks/",
         "https://ely.by/minecraft/cloaks/",
     ];
     let Some((value, signature)) = parse_profile(profile).textures else {
@@ -183,15 +193,23 @@ pub fn ely_profile_textures(profile: &serde_json::Value) -> Textures {
         .copied()
         .chain(ELY_TEXTURE_URIS)
         .collect();
-    unpack(&value, signature, &allowed)
+    let mut textures = unpack(&value, signature, &allowed);
+    textures.skin = textures.skin.map(|url| secure_ely_url(&url));
+    textures.cape = textures.cape.map(|url| secure_ely_url(&url));
+    textures.elytra = textures.elytra.map(|url| secure_ely_url(&url));
+    textures
 }
 
 /// Parse Ely.by's raw /textures/{nickname} response, validating every texture URL.
 pub fn ely_textures_response(payload: &serde_json::Value) -> Textures {
-    const ELY_TEXTURE_URIS: [&str; 4] = [
+    const ELY_TEXTURE_URIS: [&str; 8] = [
+        "http://ely.by/storage/skins/",
         "https://ely.by/storage/skins/",
+        "http://ely.by/storage/cloaks/",
         "https://ely.by/storage/cloaks/",
+        "http://ely.by/minecraft/skins/",
         "https://ely.by/minecraft/skins/",
+        "http://ely.by/minecraft/cloaks/",
         "https://ely.by/minecraft/cloaks/",
     ];
     let allowed = |url: &str| {
@@ -205,7 +223,7 @@ pub fn ely_textures_response(payload: &serde_json::Value) -> Textures {
         .and_then(|entry| entry.get("url"))
         .and_then(serde_json::Value::as_str)
         .filter(|url| allowed(url))
-        .map(str::to_owned);
+        .map(secure_ely_url);
     let slim = skin_entry
         .and_then(|entry| entry.pointer("/metadata/model"))
         .and_then(serde_json::Value::as_str)
@@ -215,7 +233,7 @@ pub fn ely_textures_response(payload: &serde_json::Value) -> Textures {
         .and_then(|entry| entry.get("url"))
         .and_then(serde_json::Value::as_str)
         .filter(|url| allowed(url))
-        .map(str::to_owned);
+        .map(secure_ely_url);
     Textures {
         skin,
         slim,
@@ -235,7 +253,7 @@ pub fn ely_textures_response(payload: &serde_json::Value) -> Textures {
     fn ely_raw_textures_endpoint_accepts_documented_skin_payload() {
         let payload = serde_json::json!({
             "SKIN": {
-                "url": "https://ely.by/storage/skins/test.png",
+                "url": "http://ely.by/storage/skins/test.png",
                 "metadata": {"model": "slim"}
             },
             "CAPE": {"url": "https://ely.by/storage/cloaks/test.png"}
@@ -260,15 +278,26 @@ pub fn ely_textures_response(payload: &serde_json::Value) -> Textures {
             super::ely_textures_response(&hostile),
             super::Textures::default()
         );
+    }
 
-        let insecure = serde_json::json!({
-            "SKIN": {"url": "http://ely.by/storage/skins/insecure.png"},
-            "CAPE": {"url": "http://ely.by/storage/cloaks/insecure.png"}
+    #[test]
+    fn ely_profile_upgrades_http_skin_urls_to_https() {
+        let textures = serde_json::json!({
+            "textures": {"SKIN": {"url": "http://ely.by/storage/skins/test.png"}}
         });
+        let value = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            textures.to_string(),
+        );
+        let profile = serde_json::json!({
+            "id": "069a79f444e94726a5befca90e38aaf5",
+            "name": "Ely",
+            "properties": [{"name": "textures", "value": value, "signature": "sig"}]
+        });
+        let parsed = super::ely_profile_textures(&profile);
         assert_eq!(
-            super::ely_textures_response(&insecure),
-            super::Textures::default(),
-            "Ely.by textures must not be accepted over unencrypted HTTP"
+            parsed.skin.as_deref(),
+            Some("https://ely.by/storage/skins/test.png")
         );
     }
 

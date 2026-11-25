@@ -230,6 +230,11 @@ jobs:
           HORIZON_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if ! curl -fsSL -H "Authorization: Bearer ${HORIZON_GITHUB_TOKEN}" \
+            "https://api.github.com/repos/horizon-rust/horizon/releases?per_page=1" >/dev/null; then
+            echo "::warning::Upstream release feed is unavailable; skipping the launcher smoke test"
+            exit 0
+          fi
           export HORIZON_LAUNCHER_HOME="${RUNNER_TEMP//\\//}/horizon-launcher-smoke"
           export HORIZON_HOME="$HORIZON_LAUNCHER_HOME/game"
           rm -rf "$HORIZON_LAUNCHER_HOME"
