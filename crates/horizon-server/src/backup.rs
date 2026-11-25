@@ -360,8 +360,7 @@ fn inspect_archive(
         if size > limits.max_entry_bytes {
             return Err(format!(
                 "backup entry {:?} is too large: {size} bytes (limit {})",
-                entry_name,
-                limits.max_entry_bytes
+                entry_name, limits.max_entry_bytes
             ));
         }
         if size > 0 && compressed == 0 {
@@ -384,10 +383,7 @@ fn inspect_archive(
         for end in 1..components.len() {
             let parent = components[..end].join("/");
             if kinds.get(&parent) == Some(&false) {
-                return Err(format!(
-                    "ZIP path has a file as a parent: {:?}",
-                    entry_name
-                ));
+                return Err(format!("ZIP path has a file as a parent: {:?}", entry_name));
             }
             kinds.entry(parent).or_insert(true);
         }
