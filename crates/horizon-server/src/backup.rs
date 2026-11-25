@@ -7,7 +7,7 @@ use crate::config::Config;
 use std::{
     collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
-    io::{BufWriter, Read, Write},
+    io::{BufWriter, Read},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -59,17 +59,14 @@ pub fn file_name(time: SystemTime, name: Option<&str>) -> Result<String, String>
 
 /// A backup never follows a symlink or Windows reparse point into another tree.
 fn is_link_or_reparse_point(metadata: &std::fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        metadata.file_attributes() & 0x400 != 0
+        metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0
     }
     #[cfg(not(windows))]
     {
-        false
+        metadata.file_type().is_symlink()
     }
 }
 
@@ -786,6 +783,7 @@ pub fn interval(every: &str) -> Result<Option<std::time::Duration>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn names_sort_by_time() {
