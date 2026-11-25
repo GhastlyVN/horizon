@@ -268,10 +268,17 @@ fn validate_archive_path(name: &str, is_dir: bool) -> Result<(PathBuf, String), 
                 c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*')
             })
         {
-            return Err(format!("unsafe ZIP path component {component:?} in {name:?}"));
+            return Err(format!(
+                "unsafe ZIP path component {component:?} in {name:?}"
+            ));
         }
 
-        let base = component.split('.').next().unwrap_or(component).to_ascii_uppercase();
+        let base = component
+            .split('.')
+            .next()
+            .unwrap_or(component)
+            .trim_end_matches(|c| c == ' ' || c == '.')
+            .to_ascii_uppercase();
         let reserved = matches!(
             base.as_str(),
             "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
@@ -373,17 +380,26 @@ fn inspect_archive(
         for end in 1..components.len() {
             let parent = components[..end].join("/");
             if kinds.get(&parent) == Some(&false) {
-                return Err(format!("ZIP path has a file as a parent: {:?}", entry.name()));
+                return Err(format!(
+                    "ZIP path has a file as a parent: {:?}",
+                    entry.name()
+                ));
             }
             kinds.entry(parent).or_insert(true);
         }
         if !explicit.insert(key.clone()) {
-            return Err(format!("duplicate or case-colliding ZIP path {:?}", entry.name()));
+            return Err(format!(
+                "duplicate or case-colliding ZIP path {:?}",
+                entry.name()
+            ));
         }
         match kinds.get(&key) {
             Some(existing_dir) if *existing_dir && is_dir => {}
             Some(_) => {
-                return Err(format!("file/directory ZIP path collision at {:?}", entry.name()));
+                return Err(format!(
+                    "file/directory ZIP path collision at {:?}",
+                    entry.name()
+                ));
             }
             None => {
                 kinds.insert(key, is_dir);
@@ -503,7 +519,9 @@ fn with_restore_scratch<T>(
                 .err()
                 .filter(|cleanup| cleanup.kind() != std::io::ErrorKind::NotFound)
             {
-                return Err(format!("{error}; temporary extraction cleanup failed: {cleanup}"));
+                return Err(format!(
+                    "{error}; temporary extraction cleanup failed: {cleanup}"
+                ));
             }
             Err(error)
         }
@@ -729,17 +747,20 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-
     #[test]
     fn archive_paths_reject_windows_aliases_and_case_collisions() {
         assert!(validate_archive_path("world/CON.txt", false).is_err());
+        assert!(validate_archive_path("world/CON .txt", false).is_err());
         assert!(validate_archive_path("world/Lpt9.dat", false).is_err());
         assert!(validate_archive_path("world/file:stream", false).is_err());
         assert!(validate_archive_path("world/trailing. ", false).is_err());
         assert!(validate_archive_path("world/../escape", false).is_err());
         assert!(validate_archive_path("world\\escape", false).is_err());
 
-        let dir = std::env::temp_dir().join(format!("horizon-server-zip-collision-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "horizon-server-zip-collision-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("collision.zip");
@@ -759,7 +780,8 @@ mod tests {
 
     #[test]
     fn archive_expansion_limit_is_checked_before_writing() {
-        let dir = std::env::temp_dir().join(format!("horizon-server-zip-limit-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("horizon-server-zip-limit-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("limit.zip");
@@ -785,7 +807,8 @@ mod tests {
 
     #[test]
     fn dimension_restore_fails_closed_on_unsafe_unrelated_entry() {
-        let dir = std::env::temp_dir().join(format!("horizon-server-dim-zipslip-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("horizon-server-dim-zipslip-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let config = Config::default();
         let current = dir.join("world/dimensions/minecraft/the_nether/region/r.0.0.mca");
@@ -797,9 +820,11 @@ mod tests {
         zip.start_file(
             "world/dimensions/minecraft/the_nether/region/r.0.0.mca",
             SimpleFileOptions::default(),
-        ).unwrap();
+        )
+        .unwrap();
         zip.write_all(b"backup").unwrap();
-        zip.start_file("../../escape.txt", SimpleFileOptions::default()).unwrap();
+        zip.start_file("../../escape.txt", SimpleFileOptions::default())
+            .unwrap();
         zip.write_all(b"pwned").unwrap();
         zip.finish().unwrap();
 
@@ -807,7 +832,10 @@ mod tests {
         assert_eq!(std::fs::read(&current).unwrap(), b"before");
         assert!(!dir.join("escape.txt").exists());
         assert!(std::fs::read_dir(&dir).unwrap().flatten().all(|entry| {
-            !entry.file_name().to_string_lossy().starts_with(".horizon-restore-")
+            !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".horizon-restore-")
         }));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -817,7 +845,8 @@ mod tests {
     fn restore_scratch_does_not_follow_a_horizon_symlink() {
         use std::os::unix::fs::symlink;
 
-        let dir = std::env::temp_dir().join(format!("horizon-server-scratch-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("horizon-server-scratch-{}", std::process::id()));
         let outside = dir.with_extension("outside");
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&outside);
@@ -829,14 +858,21 @@ mod tests {
         let config = Config::default();
         let file = File::create(dir.join("backups/manual.zip")).unwrap();
         let mut zip = ZipWriter::new(std::io::BufWriter::new(file));
-        zip.start_file("world/level.dat", SimpleFileOptions::default()).unwrap();
+        zip.start_file("world/level.dat", SimpleFileOptions::default())
+            .unwrap();
         zip.write_all(b"restored").unwrap();
         zip.finish().unwrap();
 
         restore(&dir, &config, "manual.zip").unwrap();
-        assert_eq!(std::fs::read(outside.join("restore/keep.txt")).unwrap(), b"keep");
+        assert_eq!(
+            std::fs::read(outside.join("restore/keep.txt")).unwrap(),
+            b"keep"
+        );
         assert!(std::fs::read_dir(&dir).unwrap().flatten().all(|entry| {
-            !entry.file_name().to_string_lossy().starts_with(".horizon-restore-")
+            !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".horizon-restore-")
         }));
         std::fs::remove_dir_all(&dir).unwrap();
         std::fs::remove_dir_all(&outside).unwrap();
