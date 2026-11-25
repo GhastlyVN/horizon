@@ -62,7 +62,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          release=$(gh api repos/horizon-rust/horizon/releases/tags/nightly)
+          if ! release=$(gh api repos/horizon-rust/horizon/releases/tags/nightly 2>&1); then
+            if [[ "$release" == *"Not Found"* ]]; then
+              echo "::warning::Upstream Nightly release is unavailable; nothing to mirror"
+              {
+                echo "build=false"
+                echo "title="
+                echo "date="
+                echo "short="
+                echo "version="
+                echo "upstream_sha="
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "$release" >&2
+            exit 1
+          fi
           title=$(jq -r '.name // empty' <<< "$release")
           [[ "$(jq -r '.tag_name // empty' <<< "$release")" == nightly ]] || {
             echo "::error::Upstream did not return its moving nightly release"; exit 1;
