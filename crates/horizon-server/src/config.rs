@@ -383,7 +383,12 @@ fn valid_world_folder_name(name: &str) -> bool {
         return false;
     }
 
-    let base = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let base = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(|c| c == ' ' || c == '.')
+        .to_ascii_uppercase();
     !matches!(
         base.as_str(),
         "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
@@ -833,7 +838,6 @@ mod tests {
         assert!(Config::parse("[world]\nname = \"../x\"\n").is_err());
     }
 
-
     #[test]
     fn world_name_is_a_portable_single_component() {
         for name in [
@@ -842,6 +846,7 @@ mod tests {
             "..",
             "CON",
             "con.txt",
+            "CON .txt",
             "PRN",
             "AUX",
             "NUL",
@@ -853,19 +858,19 @@ mod tests {
             "a/b",
             r"a\b",
         ] {
-            let text = format!(
-                "[world]\nname = {}\n",
-                toml::Value::String(name.to_owned())
+            let text = format!("[world]\nname = {}\n", toml::Value::String(name.to_owned()));
+            assert!(
+                Config::parse(&text).is_err(),
+                "accepted unsafe world name {name:?}"
             );
-            assert!(Config::parse(&text).is_err(), "accepted unsafe world name {name:?}");
         }
 
         for name in ["world", "My World", "world-1", "世界"] {
-            let text = format!(
-                "[world]\nname = {}\n",
-                toml::Value::String(name.to_owned())
+            let text = format!("[world]\nname = {}\n", toml::Value::String(name.to_owned()));
+            assert!(
+                Config::parse(&text).is_ok(),
+                "rejected valid world name {name:?}"
             );
-            assert!(Config::parse(&text).is_ok(), "rejected valid world name {name:?}");
         }
     }
 
