@@ -334,13 +334,13 @@ fn inspect_archive(
         let entry = zip
             .by_index(index)
             .map_err(|e| format!("reading backup entry {index}: {e}"))?;
-        if entry.encrypted() {
-            return Err(format!("backup entry {:?} is encrypted", entry_name));
-        }
         let entry_name = entry
             .name()
             .map_err(|e| format!("reading backup entry {index} name: {e}"))?
             .into_owned();
+        if entry.encrypted() {
+            return Err(format!("backup entry {:?} is encrypted", entry_name));
+        }
         let is_dir = entry.is_dir();
         if !is_dir && !entry.is_file() {
             return Err(format!(
@@ -351,7 +351,7 @@ fn inspect_archive(
         if entry.enclosed_name().is_none() {
             return Err(format!("ZIP entry escapes the backup: {:?}", entry_name));
         }
-        let (path, key) = validate_archive_path(entry_name, is_dir)?;
+        let (path, key) = validate_archive_path(&entry_name, is_dir)?;
         let size = entry.size();
         let compressed = entry.compressed_size();
         if is_dir && size != 0 {
