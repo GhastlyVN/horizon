@@ -560,7 +560,7 @@ pub fn own_textures(session: &AuthSession) -> Option<crate::skins::Textures> {
         // Some skins-system deployments answer the raw /textures payload more
         // reliably than the GameProfile wrapper, so use it as a fallback.
         let name = url_encode(&session.name);
-        let profile_url = format!("http://skinsystem.ely.by/profile/{name}?unsigned=false");
+        let profile_url = format!("https://skinsystem.ely.by/profile/{name}?unsigned=false");
         let profile = agent()
             .get(&profile_url)
             .call()
@@ -574,7 +574,7 @@ pub fn own_textures(session: &AuthSession) -> Option<crate::skins::Textures> {
             }
         }
 
-        let textures_url = format!("http://skinsystem.ely.by/textures/{name}");
+        let textures_url = format!("https://skinsystem.ely.by/textures/{name}");
         let response = agent().get(&textures_url).call().ok()?;
         if response.status() != 200 {
             return None;

@@ -1644,4 +1644,38 @@ mod tests {
             "abc"
         );
     }
+
+    /// Live Ely.by smoke: both documented endpoints answer over HTTPS, their
+    /// storage url is upgraded, and that url serves a real skin PNG. Ignored
+    /// so ordinary CI stays offline; run with
+    /// `cargo test -p horizon-client-render -- --ignored`.
+    #[test]
+    #[ignore = "requires network access to skinsystem.ely.by"]
+    fn ely_https_endpoints_serve_a_real_skin() {
+        let body = http_get("https://skinsystem.ely.by/textures/ErickSkrauch")
+            .expect("Ely.by /textures over HTTPS");
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let textures = super::ely_textures_response(&payload);
+        let url = textures.skin.expect("Ely.by skin url");
+        assert!(url.starts_with("https://ely.by/storage/skins/"), "{url}");
+
+        let body = http_get("https://skinsystem.ely.by/profile/ErickSkrauch?unsigned=false")
+            .expect("Ely.by /profile over HTTPS");
+        let profile: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            super::ely_profile_textures(&profile).skin.as_deref(),
+            Some(url.as_str())
+        );
+
+        let png = http_get(&url).expect("Ely.by skin PNG over HTTPS");
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(png.len() >= 24);
+        let width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+        let height = u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
+        assert_eq!(width, 64);
+        assert!(height == 32 || height == 64);
+        if textures.slim {
+            assert_eq!(height, 64);
+        }
+    }
 }
