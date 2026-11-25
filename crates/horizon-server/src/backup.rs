@@ -9,7 +9,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
-    time::SystemTime,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -29,7 +29,7 @@ const AUTO: &str = "auto";
 /// `2026-10-16_18-30-05`, in UTC: sorts by time, and is valid in a file name everywhere.
 fn stamp(time: SystemTime) -> String {
     let secs = time
-        .duration_since(SystemTime::UNIX_EPOCH)
+        .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
     let (y, m, d) = horizon_server_files::java_properties::civil_from_days(secs.div_euclid(86_400));
     let s = secs.rem_euclid(86_400);
