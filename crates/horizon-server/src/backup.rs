@@ -335,35 +335,39 @@ fn inspect_archive(
             .by_index(index)
             .map_err(|e| format!("reading backup entry {index}: {e}"))?;
         if entry.encrypted() {
-            return Err(format!("backup entry {:?} is encrypted", entry.name()));
+            return Err(format!("backup entry {:?} is encrypted", entry_name));
         }
+        let entry_name = entry
+            .name()
+            .map_err(|e| format!("reading backup entry {index} name: {e}"))?
+            .into_owned();
         let is_dir = entry.is_dir();
         if !is_dir && !entry.is_file() {
             return Err(format!(
                 "backup entry {:?} is a symlink or special file",
-                entry.name()
+                entry_name
             ));
         }
         if entry.enclosed_name().is_none() {
-            return Err(format!("ZIP entry escapes the backup: {:?}", entry.name()));
+            return Err(format!("ZIP entry escapes the backup: {:?}", entry_name));
         }
-        let (path, key) = validate_archive_path(entry.name(), is_dir)?;
+        let (path, key) = validate_archive_path(entry_name, is_dir)?;
         let size = entry.size();
         let compressed = entry.compressed_size();
         if is_dir && size != 0 {
-            return Err(format!("directory entry {:?} contains data", entry.name()));
+            return Err(format!("directory entry {:?} contains data", entry_name));
         }
         if size > limits.max_entry_bytes {
             return Err(format!(
                 "backup entry {:?} is too large: {size} bytes (limit {})",
-                entry.name(),
+                entry_name,
                 limits.max_entry_bytes
             ));
         }
         if size > 0 && compressed == 0 {
             return Err(format!(
                 "backup entry {:?} has an invalid compressed size",
-                entry.name()
+                entry_name
             ));
         }
         total_bytes = total_bytes
@@ -382,7 +386,7 @@ fn inspect_archive(
             if kinds.get(&parent) == Some(&false) {
                 return Err(format!(
                     "ZIP path has a file as a parent: {:?}",
-                    entry.name()
+                    entry_name
                 ));
             }
             kinds.entry(parent).or_insert(true);
@@ -390,7 +394,7 @@ fn inspect_archive(
         if !explicit.insert(key.clone()) {
             return Err(format!(
                 "duplicate or case-colliding ZIP path {:?}",
-                entry.name()
+                entry_name
             ));
         }
         match kinds.get(&key) {
@@ -398,7 +402,7 @@ fn inspect_archive(
             Some(_) => {
                 return Err(format!(
                     "file/directory ZIP path collision at {:?}",
-                    entry.name()
+                    entry_name
                 ));
             }
             None => {
