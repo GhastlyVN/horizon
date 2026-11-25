@@ -5,8 +5,9 @@
 
 use crate::config::Config;
 use std::{
-    fs::File,
-    io::{BufWriter, Write},
+    collections::{HashMap, HashSet},
+    fs::{File, OpenOptions},
+    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -211,35 +212,310 @@ fn put_restored_path_in_place(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct ArchiveLimits {
+    max_archive_bytes: u64,
+    max_entries: usize,
+    max_entry_bytes: u64,
+    max_total_bytes: u64,
+}
+
+// A normal Minecraft world is far below these ceilings. The caps leave room for large servers while
+// preventing an untrusted backup from expanding without bound.
+const BACKUP_LIMITS: ArchiveLimits = ArchiveLimits {
+    max_archive_bytes: 8 * 1024 * 1024 * 1024,
+    max_entries: 100_000,
+    max_entry_bytes: 8 * 1024 * 1024 * 1024,
+    max_total_bytes: 32 * 1024 * 1024 * 1024,
+};
+
+struct ArchiveEntry {
+    path: PathBuf,
+    is_dir: bool,
+    size: u64,
+}
+
+/// Returns a path and a portable, case-insensitive collision key. ZIP names must use forward slashes.
+fn validate_archive_path(name: &str, is_dir: bool) -> Result<(PathBuf, String), String> {
+    if name.is_empty()
+        || name.starts_with('/')
+        || name.starts_with('\\')
+        || name.contains('\\')
+        || name.contains(':')
+        || name.chars().any(|c| c.is_control())
+    {
+        return Err(format!("unsafe ZIP path {name:?}"));
+    }
+    let raw = if is_dir {
+        name.strip_suffix('/').unwrap_or(name)
+    } else {
+        name
+    };
+    if raw.is_empty() || raw.ends_with('/') {
+        return Err(format!("unsafe ZIP path {name:?}"));
+    }
+
+    let mut path = PathBuf::new();
+    let mut key_parts = Vec::new();
+    for component in raw.split('/') {
+        if component.is_empty()
+            || component == "."
+            || component == ".."
+            || component.ends_with('.')
+            || component.ends_with(' ')
+            || component.encode_utf16().count() > 255
+            || component.chars().any(|c| {
+                c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*')
+            })
+        {
+            return Err(format!("unsafe ZIP path component {component:?} in {name:?}"));
+        }
+
+        let base = component.split('.').next().unwrap_or(component).to_ascii_uppercase();
+        let reserved = matches!(
+            base.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+        ) || ["COM", "LPT"].iter().any(|prefix| {
+            base.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        });
+        if reserved {
+            return Err(format!("reserved Windows device name in ZIP path {name:?}"));
+        }
+
+        path.push(component);
+        key_parts.push(component.to_lowercase());
+    }
+
+    let key = key_parts.join("/");
+    if key.encode_utf16().count() > 1024 {
+        return Err(format!("ZIP path is too long: {name:?}"));
+    }
+    Ok((path, key))
+}
+
+/// Validates the complete central directory before any archive member is written.
+fn inspect_archive(
+    zip: &mut ZipArchive<File>,
+    archive_bytes: u64,
+    limits: ArchiveLimits,
+) -> Result<Vec<ArchiveEntry>, String> {
+    if archive_bytes > limits.max_archive_bytes {
+        return Err(format!(
+            "backup is too large: {archive_bytes} bytes (limit {})",
+            limits.max_archive_bytes
+        ));
+    }
+    if zip.len() > limits.max_entries {
+        return Err(format!(
+            "backup has too many entries: {} (limit {})",
+            zip.len(),
+            limits.max_entries
+        ));
+    }
+
+    let mut entries = Vec::with_capacity(zip.len());
+    let mut kinds = HashMap::<String, bool>::new();
+    let mut explicit = HashSet::<String>::new();
+    let mut total_bytes = 0u64;
+
+    for index in 0..zip.len() {
+        let entry = zip
+            .by_index(index)
+            .map_err(|e| format!("reading backup entry {index}: {e}"))?;
+        if entry.encrypted() {
+            return Err(format!("backup entry {:?} is encrypted", entry.name()));
+        }
+        let is_dir = entry.is_dir();
+        if !is_dir && !entry.is_file() {
+            return Err(format!(
+                "backup entry {:?} is a symlink or special file",
+                entry.name()
+            ));
+        }
+        if entry.enclosed_name().is_none() {
+            return Err(format!("ZIP entry escapes the backup: {:?}", entry.name()));
+        }
+        let (path, key) = validate_archive_path(entry.name(), is_dir)?;
+        let size = entry.size();
+        let compressed = entry.compressed_size();
+        if is_dir && size != 0 {
+            return Err(format!("directory entry {:?} contains data", entry.name()));
+        }
+        if size > limits.max_entry_bytes {
+            return Err(format!(
+                "backup entry {:?} is too large: {size} bytes (limit {})",
+                entry.name(),
+                limits.max_entry_bytes
+            ));
+        }
+        if size > 0 && compressed == 0 {
+            return Err(format!(
+                "backup entry {:?} has an invalid compressed size",
+                entry.name()
+            ));
+        }
+        total_bytes = total_bytes
+            .checked_add(size)
+            .ok_or_else(|| "backup expanded size overflows".to_owned())?;
+        if total_bytes > limits.max_total_bytes {
+            return Err(format!(
+                "backup expands beyond the limit: {total_bytes} bytes (limit {})",
+                limits.max_total_bytes
+            ));
+        }
+
+        let components: Vec<&str> = key.split('/').collect();
+        for end in 1..components.len() {
+            let parent = components[..end].join("/");
+            if kinds.get(&parent) == Some(&false) {
+                return Err(format!("ZIP path has a file as a parent: {:?}", entry.name()));
+            }
+            kinds.entry(parent).or_insert(true);
+        }
+        if !explicit.insert(key.clone()) {
+            return Err(format!("duplicate or case-colliding ZIP path {:?}", entry.name()));
+        }
+        match kinds.get(&key) {
+            Some(existing_dir) if *existing_dir && is_dir => {}
+            Some(_) => {
+                return Err(format!("file/directory ZIP path collision at {:?}", entry.name()));
+            }
+            None => {
+                kinds.insert(key, is_dir);
+            }
+        }
+        entries.push(ArchiveEntry { path, is_dir, size });
+    }
+    Ok(entries)
+}
+
+/// Extracts only after the whole archive has passed the same path/type/size policy.
+fn extract_backup_archive(
+    zip_path: &Path,
+    scratch: &Path,
+    only_prefix: Option<&Path>,
+    limits: ArchiveLimits,
+) -> Result<usize, String> {
+    let file = File::open(zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
+    let archive_bytes = file
+        .metadata()
+        .map_err(|e| format!("{}: {e}", zip_path.display()))?
+        .len();
+    let mut zip = ZipArchive::new(file).map_err(|e| format!("{}: {e}", zip_path.display()))?;
+    let entries = inspect_archive(&mut zip, archive_bytes, limits)?;
+    let mut files = 0usize;
+
+    for (index, info) in entries.iter().enumerate() {
+        if only_prefix.is_some_and(|prefix| !info.path.starts_with(prefix)) {
+            continue;
+        }
+        let out = scratch.join(&info.path);
+        if info.is_dir {
+            std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        let entry = zip
+            .by_index(index)
+            .map_err(|e| format!("reading backup entry {index}: {e}"))?;
+        let mut dest = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&out)
+            .map_err(|e| format!("{}: {e}", out.display()))?;
+        let mut bounded = entry.take(info.size.saturating_add(1));
+        let copied = std::io::copy(&mut bounded, &mut dest)
+            .map_err(|e| format!("extracting {}: {e}", out.display()))?;
+        if copied != info.size {
+            return Err(format!(
+                "backup entry {} expanded to {copied} bytes; expected {}",
+                out.display(),
+                info.size
+            ));
+        }
+        dest.sync_all()
+            .map_err(|e| format!("writing {}: {e}", out.display()))?;
+        files += 1;
+    }
+    Ok(files)
+}
+
+#[cfg(unix)]
+fn create_restore_dir(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut builder = std::fs::DirBuilder::new();
+    builder.mode(0o700);
+    builder.create(path)
+}
+
+#[cfg(not(unix))]
+fn create_restore_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(path)
+}
+
+/// Uses a unique staging directory directly under the trusted server root, never a fixed path under .horizon.
+fn create_restore_scratch(dir: &Path) -> Result<PathBuf, String> {
+    let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    for attempt in 0..32 {
+        let scratch = dir.join(format!(
+            ".horizon-restore-{}-{nonce:x}-{attempt}",
+            std::process::id()
+        ));
+        match create_restore_dir(&scratch) {
+            Ok(()) => return Ok(scratch),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("{}: {error}", scratch.display())),
+        }
+    }
+    Err("could not allocate a unique backup restore directory".into())
+}
+
+fn with_restore_scratch<T>(
+    dir: &Path,
+    operation: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let scratch = create_restore_scratch(dir)?;
+    let result = operation(&scratch);
+    let cleanup = std::fs::remove_dir_all(&scratch);
+    match result {
+        Ok(value) => {
+            if let Some(error) = cleanup
+                .err()
+                .filter(|error| error.kind() != std::io::ErrorKind::NotFound)
+            {
+                return Err(format!(
+                    "restore completed, but temporary extraction cleanup failed: {error}"
+                ));
+            }
+            Ok(value)
+        }
+        Err(error) => {
+            if let Some(cleanup) = cleanup
+                .err()
+                .filter(|cleanup| cleanup.kind() != std::io::ErrorKind::NotFound)
+            {
+                return Err(format!("{error}; temporary extraction cleanup failed: {cleanup}"));
+            }
+            Err(error)
+        }
+    }
+}
+
 /// Puts the backup's world in place of the current one, which goes to `backups/replaced-<time>/`. The
 /// server must be stopped. Returns where the old world went.
 pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf>, String> {
     let zip_path = dir.join(DIR).join(name);
-    let scratch = dir.join(".horizon/restore");
-    let _ = std::fs::remove_dir_all(&scratch);
-    let result = (|| {
-        std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
-        let file = File::open(&zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
-        let mut zip = ZipArchive::new(file).map_err(|e| format!("{name}: {e}"))?;
-        for i in 0..zip.len() {
-            let mut entry = zip.by_index(i).map_err(|e| format!("{name}: {e}"))?;
-            let Some(inner) = entry.enclosed_name() else {
-                return Err(format!(
-                    "{name}: ZIP entry escapes the backup: {:?}",
-                    entry.name()
-                ));
-            };
-            let out = scratch.join(&inner);
-            if entry.is_dir() {
-                std::fs::create_dir_all(&out).map_err(|e| format!("{name}: {e}"))?;
-                continue;
-            }
-            if let Some(parent) = out.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| format!("{name}: {e}"))?;
-            }
-            let mut dest = File::create(&out).map_err(|e| format!("{name}: {e}"))?;
-            std::io::copy(&mut entry, &mut dest).map_err(|e| format!("{name}: {e}"))?;
-        }
+    with_restore_scratch(dir, |scratch| {
+        extract_backup_archive(&zip_path, scratch, None, BACKUP_LIMITS)?;
         let world = &config.world.name;
         let restored = scratch.join(world);
         if !restored.join("level.dat").is_file() {
@@ -267,33 +543,7 @@ pub fn restore(dir: &Path, config: &Config, name: &str) -> Result<Option<PathBuf
             "putting the backup in place",
         )?;
         Ok(moved)
-    })();
-
-    let cleanup = std::fs::remove_dir_all(&scratch);
-    match result {
-        Ok(value) => {
-            if let Some(error) = cleanup
-                .err()
-                .filter(|error| error.kind() != std::io::ErrorKind::NotFound)
-            {
-                return Err(format!(
-                    "backup restore completed, but temporary extraction cleanup failed: {error}"
-                ));
-            }
-            Ok(value)
-        }
-        Err(error) => {
-            if let Some(cleanup) = cleanup
-                .err()
-                .filter(|cleanup| cleanup.kind() != std::io::ErrorKind::NotFound)
-            {
-                return Err(format!(
-                    "{error}; temporary extraction cleanup failed: {cleanup}"
-                ));
-            }
-            Err(error)
-        }
-    }
+    })
 }
 
 /// A dimension id (`minecraft:the_nether`, or `the_nether` for `minecraft:`) as the id and its folder in the
@@ -336,83 +586,46 @@ pub fn restore_dimension(
 ) -> Result<Option<PathBuf>, String> {
     let (id, folder) = dimension_folder(dimension)?;
     let world = &config.world.name;
-    let prefix = format!("{world}/{folder}/");
+    let prefix = PathBuf::from(world).join(&folder);
     let zip_path = dir.join(DIR).join(name);
-    let scratch = dir.join(".horizon/restore");
-    let _ = std::fs::remove_dir_all(&scratch);
-    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
-    let result = (|| {
-        let file = File::open(&zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
-        let mut zip = ZipArchive::new(file).map_err(|e| format!("{name}: {e}"))?;
-        let mut files = 0;
-        for i in 0..zip.len() {
-            let mut entry = zip.by_index(i).map_err(|e| format!("{name}: {e}"))?;
-            let Some(inner) = entry.enclosed_name() else {
-                continue;
-            };
-            if !inner.starts_with(&prefix) {
-                continue;
-            }
-            let out = scratch.join(&inner);
-            if entry.is_dir() {
-                std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-                continue;
-            }
-            if let Some(parent) = out.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            let mut dest = File::create(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-            std::io::copy(&mut entry, &mut dest).map_err(|e| format!("{name}: {e}"))?;
-            files += 1;
-        }
+
+    with_restore_scratch(dir, |scratch| {
+        let files = extract_backup_archive(&zip_path, scratch, Some(&prefix), BACKUP_LIMITS)?;
         if files == 0 {
             return Err(format!(
                 "{name} holds nothing of the dimension {id} (no {world}/{folder}/)"
             ));
         }
-        Ok(())
-    })();
-    if let Err(e) = result {
-        let _ = std::fs::remove_dir_all(&scratch);
-        return Err(e);
-    }
-    let restored = scratch.join(world).join(&folder);
-    let current = dir.join(world).join(&folder);
-    let moved = if current.exists() {
-        let target = dir
-            .join(DIR)
-            .join(format!("replaced-{}", stamp(SystemTime::now())))
-            .join(world)
-            .join(&folder);
-        if target.exists() {
-            let _ = std::fs::remove_dir_all(&scratch);
-            return Err(format!(
-                "{} exists already; try again in a second",
-                target.display()
-            ));
-        }
-        std::fs::create_dir_all(target.parent().expect("the folder has a parent"))
-            .map_err(|e| e.to_string())?;
-        std::fs::rename(&current, &target)
-            .map_err(|e| format!("moving the current {id} aside: {e}"))?;
-        Some(target)
-    } else {
-        None
-    };
-    let put = (|| {
-        std::fs::create_dir_all(current.parent().expect("the folder has a parent"))?;
-        std::fs::rename(&restored, &current)
-    })();
-    if let Err(e) = put {
-        // Put the old folder back: the world must not be left without the dimension.
-        if let Some(old) = &moved {
-            let _ = std::fs::rename(old, &current);
-        }
-        let _ = std::fs::remove_dir_all(&scratch);
-        return Err(format!("putting the backup's {id} in place: {e}"));
-    }
-    let _ = std::fs::remove_dir_all(&scratch);
-    Ok(moved)
+
+        let restored = scratch.join(&prefix);
+        let current = dir.join(&prefix);
+        let moved = if current.exists() {
+            let target = dir
+                .join(DIR)
+                .join(format!("replaced-{}", stamp(SystemTime::now())))
+                .join(&prefix);
+            if target.exists() {
+                return Err(format!(
+                    "{} exists already; try again in a second",
+                    target.display()
+                ));
+            }
+            std::fs::create_dir_all(target.parent().expect("the folder has a parent"))
+                .map_err(|e| e.to_string())?;
+            std::fs::rename(&current, &target)
+                .map_err(|e| format!("moving the current {id} aside: {e}"))?;
+            Some(target)
+        } else {
+            None
+        };
+        put_restored_path_in_place(
+            &restored,
+            &current,
+            moved.as_deref(),
+            &format!("putting the backup's {id} in place"),
+        )?;
+        Ok(moved)
+    })
 }
 
 /// `every` from server.toml: `"6h"`, `"30m"`, `"1d"`, or `"0"` for no automatic backups.
@@ -514,6 +727,119 @@ mod tests {
         assert_eq!(find(&dir, "auto").unwrap(), left[0]);
         assert!(find(&dir, "nothing").is_err());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+
+    #[test]
+    fn archive_paths_reject_windows_aliases_and_case_collisions() {
+        assert!(validate_archive_path("world/CON.txt", false).is_err());
+        assert!(validate_archive_path("world/Lpt9.dat", false).is_err());
+        assert!(validate_archive_path("world/file:stream", false).is_err());
+        assert!(validate_archive_path("world/trailing. ", false).is_err());
+        assert!(validate_archive_path("world/../escape", false).is_err());
+        assert!(validate_archive_path("world\\escape", false).is_err());
+
+        let dir = std::env::temp_dir().join(format!("horizon-server-zip-collision-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("collision.zip");
+        let file = File::create(&path).unwrap();
+        let mut zip = ZipWriter::new(std::io::BufWriter::new(file));
+        for name in ["world/region/A.mca", "world/region/a.mca"] {
+            zip.start_file(name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(b"data").unwrap();
+        }
+        zip.finish().unwrap();
+        let file = File::open(&path).unwrap();
+        let bytes = file.metadata().unwrap().len();
+        let mut archive = ZipArchive::new(file).unwrap();
+        assert!(inspect_archive(&mut archive, bytes, BACKUP_LIMITS).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn archive_expansion_limit_is_checked_before_writing() {
+        let dir = std::env::temp_dir().join(format!("horizon-server-zip-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("limit.zip");
+        let file = File::create(&path).unwrap();
+        let mut zip = ZipWriter::new(std::io::BufWriter::new(file));
+        for name in ["world/one.dat", "world/two.dat"] {
+            zip.start_file(name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(b"four").unwrap();
+        }
+        zip.finish().unwrap();
+        let file = File::open(&path).unwrap();
+        let bytes = file.metadata().unwrap().len();
+        let mut archive = ZipArchive::new(file).unwrap();
+        let limits = ArchiveLimits {
+            max_archive_bytes: u64::MAX,
+            max_entries: 10,
+            max_entry_bytes: 16,
+            max_total_bytes: 7,
+        };
+        assert!(inspect_archive(&mut archive, bytes, limits).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn dimension_restore_fails_closed_on_unsafe_unrelated_entry() {
+        let dir = std::env::temp_dir().join(format!("horizon-server-dim-zipslip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = Config::default();
+        let current = dir.join("world/dimensions/minecraft/the_nether/region/r.0.0.mca");
+        std::fs::create_dir_all(current.parent().unwrap()).unwrap();
+        std::fs::write(&current, b"before").unwrap();
+        std::fs::create_dir_all(dir.join("backups")).unwrap();
+        let file = File::create(dir.join("backups/manual.zip")).unwrap();
+        let mut zip = ZipWriter::new(std::io::BufWriter::new(file));
+        zip.start_file(
+            "world/dimensions/minecraft/the_nether/region/r.0.0.mca",
+            SimpleFileOptions::default(),
+        ).unwrap();
+        zip.write_all(b"backup").unwrap();
+        zip.start_file("../../escape.txt", SimpleFileOptions::default()).unwrap();
+        zip.write_all(b"pwned").unwrap();
+        zip.finish().unwrap();
+
+        assert!(restore_dimension(&dir, &config, "manual.zip", "the_nether").is_err());
+        assert_eq!(std::fs::read(&current).unwrap(), b"before");
+        assert!(!dir.join("escape.txt").exists());
+        assert!(std::fs::read_dir(&dir).unwrap().flatten().all(|entry| {
+            !entry.file_name().to_string_lossy().starts_with(".horizon-restore-")
+        }));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_scratch_does_not_follow_a_horizon_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("horizon-server-scratch-{}", std::process::id()));
+        let outside = dir.with_extension("outside");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(outside.join("restore")).unwrap();
+        std::fs::write(outside.join("restore/keep.txt"), b"keep").unwrap();
+        std::fs::create_dir_all(dir.join("backups")).unwrap();
+        symlink(&outside, dir.join(".horizon")).unwrap();
+
+        let config = Config::default();
+        let file = File::create(dir.join("backups/manual.zip")).unwrap();
+        let mut zip = ZipWriter::new(std::io::BufWriter::new(file));
+        zip.start_file("world/level.dat", SimpleFileOptions::default()).unwrap();
+        zip.write_all(b"restored").unwrap();
+        zip.finish().unwrap();
+
+        restore(&dir, &config, "manual.zip").unwrap();
+        assert_eq!(std::fs::read(outside.join("restore/keep.txt")).unwrap(), b"keep");
+        assert!(std::fs::read_dir(&dir).unwrap().flatten().all(|entry| {
+            !entry.file_name().to_string_lossy().starts_with(".horizon-restore-")
+        }));
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&outside).unwrap();
     }
 
     #[test]
