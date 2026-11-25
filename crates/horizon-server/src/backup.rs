@@ -57,27 +57,98 @@ pub fn file_name(time: SystemTime, name: Option<&str>) -> Result<String, String>
     Ok(format!("{}-{name}.zip", stamp(time)))
 }
 
+/// A backup never follows a symlink or Windows reparse point into another tree.
+fn is_link_or_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Opens a regular backup input without following a final-component link.
+fn open_backup_file(path: &Path) -> Result<File, String> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT: inspect the link itself instead of its target.
+        options.custom_flags(0x0020_0000);
+    }
+    let file = options
+        .open(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if is_link_or_reparse_point(&metadata) || !metadata.is_file() {
+        return Err(format!(
+            "backup refuses symlink, reparse point or non-regular file: {}",
+            path.display()
+        ));
+    }
+    Ok(file)
+}
+
 /// Adds a folder to the zip, under `prefix`, skipping the game's session lock.
 fn add_dir(zip: &mut ZipWriter<BufWriter<File>>, dir: &Path, prefix: &str) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
+    if is_link_or_reparse_point(&metadata) || !metadata.is_dir() {
+        return Err(format!(
+            "backup refuses symlink, reparse point or non-directory: {}",
+            dir.display()
+        ));
+    }
+
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
         .large_file(true);
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
-        .flatten()
-        .collect();
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("reading {}: {e}", dir.display()))?;
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let name = entry.file_name().to_string_lossy().into_owned();
+        if name == "session.lock" {
+            continue;
+        }
         let path = entry.path();
         let inner = format!("{prefix}/{name}");
-        if path.is_dir() {
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        if is_link_or_reparse_point(&metadata) {
+            return Err(format!(
+                "backup refuses symlink or reparse point: {}",
+                path.display()
+            ));
+        }
+        if metadata.is_dir() {
             add_dir(zip, &path, &inner)?;
-        } else if name != "session.lock" {
+        } else if metadata.is_file() {
             zip.start_file(inner.as_str(), options)
                 .map_err(|e| e.to_string())?;
-            let mut file = File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let mut file = open_backup_file(&path)?;
             std::io::copy(&mut file, zip).map_err(|e| format!("{}: {e}", path.display()))?;
+        } else {
+            return Err(format!(
+                "backup refuses special filesystem entry: {}",
+                path.display()
+            ));
         }
     }
     Ok(())
@@ -88,21 +159,65 @@ fn add_dir(zip: &mut ZipWriter<BufWriter<File>>, dir: &Path, prefix: &str) -> Re
 pub fn create(dir: &Path, config: &Config, file_name: &str) -> Result<PathBuf, String> {
     let backups = dir.join(DIR);
     std::fs::create_dir_all(&backups).map_err(|e| format!("{}: {e}", backups.display()))?;
+    let backups_metadata = std::fs::symlink_metadata(&backups)
+        .map_err(|e| format!("{}: {e}", backups.display()))?;
+    if is_link_or_reparse_point(&backups_metadata) || !backups_metadata.is_dir() {
+        return Err(format!(
+            "backup directory must be a real directory, not a symlink or reparse point: {}",
+            backups.display()
+        ));
+    }
+
     let path = backups.join(file_name);
     let part = backups.join(format!("{file_name}.part"));
     let result = (|| {
-        let file = File::create(&part).map_err(|e| format!("{}: {e}", part.display()))?;
+        // create_new refuses an existing .part path, including a symlink, instead of
+        // truncating or following whatever it points at.
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&part)
+            .map_err(|e| format!("{}: {e}", part.display()))?;
         let mut zip = ZipWriter::new(BufWriter::new(file));
         let world = dir.join(&config.world.name);
-        if world.is_dir() {
-            add_dir(&mut zip, &world, &config.world.name)?;
+        match std::fs::symlink_metadata(&world) {
+            Ok(metadata) if is_link_or_reparse_point(&metadata) => {
+                return Err(format!(
+                    "backup refuses symlink or reparse point: {}",
+                    world.display()
+                ));
+            }
+            Ok(metadata) if metadata.is_dir() => {
+                add_dir(&mut zip, &world, &config.world.name)?;
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "backup world path is not a directory: {}",
+                    world.display()
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("{}: {error}", world.display())),
         }
+
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         for name in FILES {
-            if let Ok(bytes) = std::fs::read(dir.join(name)) {
-                zip.start_file(name, options).map_err(|e| e.to_string())?;
-                zip.write_all(&bytes).map_err(|e| e.to_string())?;
+            let source = dir.join(name);
+            let metadata = match std::fs::symlink_metadata(&source) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(format!("{}: {error}", source.display())),
+            };
+            if is_link_or_reparse_point(&metadata) || !metadata.is_file() {
+                return Err(format!(
+                    "backup refuses symlink, reparse point or non-regular settings file: {}",
+                    source.display()
+                ));
             }
+            let mut input = open_backup_file(&source)?;
+            zip.start_file(name, options).map_err(|e| e.to_string())?;
+            std::io::copy(&mut input, &mut zip)
+                .map_err(|e| format!("{}: {e}", source.display()))?;
         }
         zip.finish()
             .map_err(|e| e.to_string())?
@@ -696,6 +811,75 @@ mod tests {
         );
         assert_eq!(interval("0").unwrap(), None);
         assert!(interval("6 hours").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_refuses_symlinked_world_files_and_directories() {
+        use std::os::unix::fs::symlink;
+
+        for (suffix, entry_name, target_is_dir) in [
+            ("file", "linked-file", false),
+            ("directory", "linked-directory", true),
+        ] {
+            let dir = std::env::temp_dir().join(format!(
+                "horizon-server-backup-symlink-{}-{suffix}",
+                std::process::id()
+            ));
+            let outside = dir.with_extension("outside");
+            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::remove_dir_all(&outside);
+            let _ = std::fs::remove_file(&outside);
+            let world = dir.join("world");
+            std::fs::create_dir_all(&world).unwrap();
+            if target_is_dir {
+                std::fs::create_dir_all(&outside).unwrap();
+                std::fs::write(outside.join("secret.dat"), b"outside").unwrap();
+                symlink(&outside, world.join(entry_name)).unwrap();
+            } else {
+                std::fs::write(&outside, b"outside").unwrap();
+                symlink(&outside, world.join(entry_name)).unwrap();
+            }
+
+            let name = file_name(SystemTime::now(), None).unwrap();
+            let error = create(&dir, &Config::default(), &name).unwrap_err();
+            assert!(error.contains("symlink or reparse point"), "{error}");
+            assert!(!dir.join(DIR).join(format!("{name}.part")).exists());
+            assert!(!dir.join(DIR).join(name).exists());
+
+            std::fs::remove_dir_all(&dir).unwrap();
+            if target_is_dir {
+                std::fs::remove_dir_all(&outside).unwrap();
+            } else {
+                std::fs::remove_file(&outside).unwrap();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_refuses_symlinked_settings_files() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!(
+            "horizon-server-backup-settings-symlink-{}",
+            std::process::id()
+        ));
+        let outside = dir.with_extension("outside");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&outside);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&outside, b"outside settings").unwrap();
+        symlink(&outside, dir.join("server.toml")).unwrap();
+
+        let name = file_name(SystemTime::now(), None).unwrap();
+        let error = create(&dir, &Config::default(), &name).unwrap_err();
+        assert!(error.contains("backup refuses symlink, reparse point or non-regular settings file"), "{error}");
+        assert!(!dir.join(DIR).join(format!("{name}.part")).exists());
+        assert!(!dir.join(DIR).join(name).exists());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_file(&outside).unwrap();
     }
 
     #[test]
