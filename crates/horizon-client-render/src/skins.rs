@@ -90,6 +90,12 @@ pub fn unpack(value: &str, signature: Signature, valid_uris: &[&str]) -> Texture
     out
 }
 
+/// Ely.by's JSON still names storage files with `http://ely.by/...`; upgrade
+/// only that exact host so the downloader never makes a plaintext request.
+fn secure_ely_url(url: &str) -> String {
+    url.replacen("http://ely.by/", "https://ely.by/", 1)
+}
+
 pub fn ely_profile_textures(profile: &serde_json::Value) -> Textures {
     const ELY_TEXTURE_URIS: [&str; 8] = [
         "http://ely.by/storage/skins/",
@@ -109,7 +115,11 @@ pub fn ely_profile_textures(profile: &serde_json::Value) -> Textures {
         .copied()
         .chain(ELY_TEXTURE_URIS)
         .collect();
-    unpack(&value, signature, &allowed)
+    let mut textures = unpack(&value, signature, &allowed);
+    textures.skin = textures.skin.map(|url| secure_ely_url(&url));
+    textures.cape = textures.cape.map(|url| secure_ely_url(&url));
+    textures.elytra = textures.elytra.map(|url| secure_ely_url(&url));
+    textures
 }
 
 /// The raw JSON body of Ely.by's `/textures/{nickname}` endpoint.
@@ -137,7 +147,7 @@ pub fn ely_textures_response(payload: &serde_json::Value) -> Textures {
         .and_then(|entry| entry.get("url"))
         .and_then(serde_json::Value::as_str)
         .filter(|url| allowed(url))
-        .map(str::to_owned);
+        .map(secure_ely_url);
     let slim = skin_entry
         .and_then(|entry| entry.pointer("/metadata/model"))
         .and_then(serde_json::Value::as_str)
@@ -147,7 +157,7 @@ pub fn ely_textures_response(payload: &serde_json::Value) -> Textures {
         .and_then(|entry| entry.get("url"))
         .and_then(serde_json::Value::as_str)
         .filter(|url| allowed(url))
-        .map(str::to_owned);
+        .map(secure_ely_url);
     Textures {
         skin,
         slim,
@@ -1308,7 +1318,7 @@ mod tests {
         let textures = super::ely_textures_response(&payload);
         assert_eq!(
             textures.skin.as_deref(),
-            Some("http://ely.by/storage/skins/test.png")
+            Some("https://ely.by/storage/skins/test.png")
         );
         assert!(textures.slim);
         assert_eq!(
@@ -1327,6 +1337,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ely_profile_upgrades_http_skin_urls_to_https() {
+        let textures = serde_json::json!({
+            "textures": {"SKIN": {"url": "http://ely.by/storage/skins/test.png"}}
+        });
+        let value = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            textures.to_string(),
+        );
+        let profile = serde_json::json!({
+            "id": "069a79f444e94726a5befca90e38aaf5",
+            "name": "Ely",
+            "properties": [{"name": "textures", "value": value, "signature": "sig"}]
+        });
+        let parsed = super::ely_profile_textures(&profile);
+        assert_eq!(
+            parsed.skin.as_deref(),
+            Some("https://ely.by/storage/skins/test.png")
+        );
+    }
     #[test]
     fn services_profile_answers_give_the_active_skin_and_cape() {
         let profile = serde_json::json!({
