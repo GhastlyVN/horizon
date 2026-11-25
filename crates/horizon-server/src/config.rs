@@ -387,7 +387,7 @@ fn valid_world_folder_name(name: &str) -> bool {
         .split('.')
         .next()
         .unwrap_or(name)
-        .trim_end_matches(|c| c == ' ' || c == '.')
+        .trim_end_matches([' ', '.'])
         .to_ascii_uppercase();
     !matches!(
         base.as_str(),
