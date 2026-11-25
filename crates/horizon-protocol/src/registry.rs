@@ -112,13 +112,15 @@ impl Builtin {
         }
 
         let mut registries = HashMap::new();
-        registries.try_reserve(root.len()).map_err(|error| {
-            Error::new(format!("could not allocate registry map: {error}"))
-        })?;
+        registries
+            .try_reserve(root.len())
+            .map_err(|error| Error::new(format!("could not allocate registry map: {error}")))?;
         let mut total_slots = 0usize;
         for (name, registry) in root {
             if name.is_empty() {
-                return Err(Error::new("registries report contains an empty registry name"));
+                return Err(Error::new(
+                    "registries report contains an empty registry name",
+                ));
             }
             let Some(entries) = registry["entries"].as_object() else {
                 continue;
@@ -136,7 +138,9 @@ impl Builtin {
             let mut slot_count = entries.len();
             for (entry, value) in entries {
                 if entry.is_empty() {
-                    return Err(Error::new(format!("{name}: registry contains an empty entry name")));
+                    return Err(Error::new(format!(
+                        "{name}: registry contains an empty entry name"
+                    )));
                 }
                 let id = value["protocol_id"]
                     .as_u64()
@@ -179,7 +183,9 @@ impl Builtin {
                         .as_u64()
                         .ok_or_else(|| Error::new(format!("{entry}: no protocol_id")))?,
                 )
-                .map_err(|_| Error::new(format!("{entry}: protocol_id does not fit this platform")))?;
+                .map_err(|_| {
+                    Error::new(format!("{entry}: protocol_id does not fit this platform"))
+                })?;
                 if !names[id].is_empty() {
                     return Err(Error::new(format!(
                         "{name}: duplicate protocol_id {id} (entry {entry})"
@@ -405,8 +411,7 @@ mod tests {
         let many = r#"{"first":{},"second":{}}"#;
         assert!(Builtin::parse_with_limits(many, usize::MAX, 1).is_err());
 
-        let empty_name =
-            r#"{"minecraft:item":{"entries":{"":{"protocol_id":0}}}}"#;
+        let empty_name = r#"{"minecraft:item":{"entries":{"":{"protocol_id":0}}}}"#;
         assert!(Builtin::parse(empty_name).is_err());
     }
 
