@@ -105,8 +105,7 @@ fn open_backup_file(path: &Path) -> Result<File, String> {
 
 /// Adds a folder to the zip, under `prefix`, skipping the game's session lock.
 fn add_dir(zip: &mut ZipWriter<BufWriter<File>>, dir: &Path, prefix: &str) -> Result<(), String> {
-    let metadata = std::fs::symlink_metadata(dir)
-        .map_err(|e| format!("{}: {e}", dir.display()))?;
+    let metadata = std::fs::symlink_metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     if is_link_or_reparse_point(&metadata) || !metadata.is_dir() {
         return Err(format!(
             "backup refuses symlink, reparse point or non-directory: {}",
@@ -129,8 +128,7 @@ fn add_dir(zip: &mut ZipWriter<BufWriter<File>>, dir: &Path, prefix: &str) -> Re
         }
         let path = entry.path();
         let inner = format!("{prefix}/{name}");
-        let metadata = std::fs::symlink_metadata(&path)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let metadata = std::fs::symlink_metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         if is_link_or_reparse_point(&metadata) {
             return Err(format!(
                 "backup refuses symlink or reparse point: {}",
@@ -159,8 +157,8 @@ fn add_dir(zip: &mut ZipWriter<BufWriter<File>>, dir: &Path, prefix: &str) -> Re
 pub fn create(dir: &Path, config: &Config, file_name: &str) -> Result<PathBuf, String> {
     let backups = dir.join(DIR);
     std::fs::create_dir_all(&backups).map_err(|e| format!("{}: {e}", backups.display()))?;
-    let backups_metadata = std::fs::symlink_metadata(&backups)
-        .map_err(|e| format!("{}: {e}", backups.display()))?;
+    let backups_metadata =
+        std::fs::symlink_metadata(&backups).map_err(|e| format!("{}: {e}", backups.display()))?;
     if is_link_or_reparse_point(&backups_metadata) || !backups_metadata.is_dir() {
         return Err(format!(
             "backup directory must be a real directory, not a symlink or reparse point: {}",
@@ -874,7 +872,10 @@ mod tests {
 
         let name = file_name(SystemTime::now(), None).unwrap();
         let error = create(&dir, &Config::default(), &name).unwrap_err();
-        assert!(error.contains("backup refuses symlink, reparse point or non-regular settings file"), "{error}");
+        assert!(
+            error.contains("backup refuses symlink, reparse point or non-regular settings file"),
+            "{error}"
+        );
         assert!(!dir.join(DIR).join(format!("{name}.part")).exists());
         assert!(!dir.join(DIR).join(name).exists());
 
