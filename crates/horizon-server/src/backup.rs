@@ -128,7 +128,8 @@ fn add_dir(zip: &mut ZipWriter<BufWriter<File>>, dir: &Path, prefix: &str) -> Re
         }
         let path = entry.path();
         let inner = format!("{prefix}/{name}");
-        let metadata = std::fs::symlink_metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let metadata =
+            std::fs::symlink_metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         if is_link_or_reparse_point(&metadata) {
             return Err(format!(
                 "backup refuses symlink or reparse point: {}",
