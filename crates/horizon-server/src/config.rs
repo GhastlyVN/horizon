@@ -369,6 +369,34 @@ fn text_or_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::E
     })
 }
 
+fn valid_world_folder_name(name: &str) -> bool {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.ends_with('.')
+        || name.ends_with(' ')
+        || name.encode_utf16().count() > 240
+        || name.chars().any(|c| {
+            c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        })
+    {
+        return false;
+    }
+
+    let base = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    !matches!(
+        base.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) && !["COM", "LPT"].iter().any(|prefix| {
+        base.strip_prefix(prefix).is_some_and(|suffix| {
+            matches!(
+                suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
+    })
+}
+
 impl Config {
     pub fn parse(text: &str) -> Result<Self, String> {
         let config: Self = toml::from_str(text).map_err(|e| e.to_string())?;
@@ -399,9 +427,9 @@ impl Config {
                 DIFFICULTIES.join(", ")
             ));
         }
-        if w.name.is_empty() || w.name.contains(['/', '\\']) || w.name == ".." {
+        if !valid_world_folder_name(&w.name) {
             return Err(format!(
-                "world.name \"{}\" must be a folder name, without slashes",
+                "world.name {:?} must be a portable single folder name (no path separators, Windows device names, ADS, or trailing dot/space)",
                 w.name
             ));
         }
@@ -803,6 +831,42 @@ mod tests {
         assert!(Config::parse("[server]\nprot = 1\n").is_err());
         assert!(Config::parse("[properties]\nmotd = \"x\"\n").is_err());
         assert!(Config::parse("[world]\nname = \"../x\"\n").is_err());
+    }
+
+
+    #[test]
+    fn world_name_is_a_portable_single_component() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "CON",
+            "con.txt",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "LPT9",
+            "world:stream",
+            "world.",
+            "world ",
+            "a/b",
+            r"a\b",
+        ] {
+            let text = format!(
+                "[world]\nname = {}\n",
+                toml::Value::String(name.to_owned())
+            );
+            assert!(Config::parse(&text).is_err(), "accepted unsafe world name {name:?}");
+        }
+
+        for name in ["world", "My World", "world-1", "世界"] {
+            let text = format!(
+                "[world]\nname = {}\n",
+                toml::Value::String(name.to_owned())
+            );
+            assert!(Config::parse(&text).is_ok(), "rejected valid world name {name:?}");
+        }
     }
 
     #[test]
