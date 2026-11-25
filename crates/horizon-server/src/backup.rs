@@ -277,7 +277,7 @@ fn validate_archive_path(name: &str, is_dir: bool) -> Result<(PathBuf, String), 
             .split('.')
             .next()
             .unwrap_or(component)
-            .trim_end_matches(|c| c == ' ' || c == '.')
+            .trim_end_matches([' ', '.'])
             .to_ascii_uppercase();
         let reserved = matches!(
             base.as_str(),
