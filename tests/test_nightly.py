@@ -1,5 +1,6 @@
 import datetime as dt
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from tools.ci import nightly
@@ -44,6 +45,13 @@ class NightlyTests(unittest.TestCase):
                 {"tagName": "v0.2.80", "isPrerelease": False},
                 {"tagName": "nightly-2026-10-15-extra", "isPrerelease": True}]
         self.assertEqual(nightly.stale(tags, dt.date(2026, 10, 28), 7), ["nightly-2026-10-20"])
+
+    def test_fetch_main_does_not_require_the_rotated_nightly_tag(self):
+        with patch.object(nightly, "git") as git:
+            nightly.fetch_main()
+        git.assert_called_once_with(
+            "fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main"
+        )
 
     def test_notes_list_what_reached_main_as_a_release_did(self):
         merged = [merged_pr(1, "Fix pistons", ["feature"], issues=[7]), merged_pr(2, "Water flows", []),
