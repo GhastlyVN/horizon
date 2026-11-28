@@ -8,7 +8,15 @@ use crate::{
     packets::configuration::{RegistryData, UpdateTags},
 };
 use horizon_world::nbt::{JavaString, Tag};
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, io::Read, path::Path};
+
+/// Bound the total indexed slots allocated from an untrusted registry report.
+/// Sparse protocol ids are valid, but a corrupt report must not trigger an unbounded resize.
+const MAX_BUILTIN_REGISTRY_SLOTS: usize = 1_000_000;
+/// Refuse oversized reports before parsing or allocating their JSON value tree.
+const MAX_BUILTIN_REGISTRY_REPORT_BYTES: usize = 64 * 1024 * 1024;
+/// A report should contain a small, finite set of built-in registries.
+const MAX_BUILTIN_REGISTRIES: usize = 4_096;
 
 /// One registry: names by network id and the reverse lookup.
 #[derive(Clone, Debug, Default)]
@@ -21,7 +29,8 @@ impl Ids {
         let ids = names
             .iter()
             .enumerate()
-            .map(|(i, n)| (n.clone(), i as i32))
+            .filter(|(_, name)| !name.is_empty())
+            .map(|(i, name)| (name.clone(), i as i32))
             .collect();
         Self { names, ids }
     }
@@ -30,6 +39,7 @@ impl Ids {
             .ok()
             .and_then(|i| self.names.get(i))
             .map(String::as_str)
+            .filter(|name| !name.is_empty())
     }
     pub fn id(&self, name: &str) -> Option<i32> {
         self.ids.get(name).copied()
@@ -64,29 +74,122 @@ impl crate::item::Names for SyncedNames<'_> {
 
 impl Builtin {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
+        let mut text = String::new();
+        std::fs::File::open(path)
+            .map_err(|e| Error::new(format!("{}: {e}", path.display())))?
+            .take(MAX_BUILTIN_REGISTRY_REPORT_BYTES as u64 + 1)
+            .read_to_string(&mut text)
             .map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
         Self::parse(&text)
     }
     pub fn parse(text: &str) -> Result<Self> {
+        Self::parse_with_limits(
+            text,
+            MAX_BUILTIN_REGISTRY_REPORT_BYTES,
+            MAX_BUILTIN_REGISTRIES,
+        )
+    }
+    fn parse_with_limits(
+        text: &str,
+        max_report_bytes: usize,
+        max_registries: usize,
+    ) -> Result<Self> {
+        if text.len() > max_report_bytes {
+            return Err(Error::new(format!(
+                "registries report exceeds the byte limit ({max_report_bytes})"
+            )));
+        }
         let json: serde_json::Value = serde_json::from_str(text)
             .map_err(|e| Error::new(format!("registries report: {e}")))?;
-        let mut registries = HashMap::new();
-        for (name, registry) in json
+        let root = json
             .as_object()
-            .ok_or_else(|| Error::new("registries report is not an object"))?
-        {
+            .ok_or_else(|| Error::new("registries report is not an object"))?;
+        if root.len() > max_registries {
+            return Err(Error::new(format!(
+                "registries report has too many registries ({}, limit {max_registries})",
+                root.len()
+            )));
+        }
+
+        let mut registries = HashMap::new();
+        registries
+            .try_reserve(root.len())
+            .map_err(|error| Error::new(format!("could not allocate registry map: {error}")))?;
+        let mut total_slots = 0usize;
+        for (name, registry) in root {
+            if name.is_empty() {
+                return Err(Error::new(
+                    "registries report contains an empty registry name",
+                ));
+            }
             let Some(entries) = registry["entries"].as_object() else {
                 continue;
             };
-            let mut names = vec![String::new(); entries.len()];
+            if entries.len() > MAX_BUILTIN_REGISTRY_SLOTS {
+                return Err(Error::new(format!(
+                    "{name}: registry has too many entries ({}, limit {MAX_BUILTIN_REGISTRY_SLOTS})",
+                    entries.len()
+                )));
+            }
+
+            // Protocol ids index the resulting name table, but a valid registry can be sparse
+            // (for example, a mod entry may retain its network id after omitted vanilla entries).
+            // Bound the aggregate table size rather than incorrectly requiring id < entries.len().
+            let mut slot_count = entries.len();
             for (entry, value) in entries {
+                if entry.is_empty() {
+                    return Err(Error::new(format!(
+                        "{name}: registry contains an empty entry name"
+                    )));
+                }
                 let id = value["protocol_id"]
                     .as_u64()
-                    .ok_or_else(|| Error::new(format!("{entry}: no protocol_id")))?
-                    as usize;
-                if id >= names.len() {
-                    names.resize(id + 1, String::new());
+                    .ok_or_else(|| Error::new(format!("{entry}: no protocol_id")))?;
+                let id = usize::try_from(id).map_err(|_| {
+                    Error::new(format!(
+                        "{entry}: protocol_id {id} does not fit this platform"
+                    ))
+                })?;
+                let required_slots = id
+                    .checked_add(1)
+                    .ok_or_else(|| Error::new(format!("{entry}: protocol_id {id} is too large")))?;
+                if required_slots > MAX_BUILTIN_REGISTRY_SLOTS {
+                    return Err(Error::new(format!(
+                        "{entry}: protocol_id {id} exceeds the registry slot limit ({MAX_BUILTIN_REGISTRY_SLOTS})"
+                    )));
+                }
+                slot_count = slot_count.max(required_slots);
+            }
+
+            total_slots = total_slots.checked_add(slot_count).ok_or_else(|| {
+                Error::new("registries report exceeds the total registry slot limit")
+            })?;
+            if total_slots > MAX_BUILTIN_REGISTRY_SLOTS {
+                return Err(Error::new(format!(
+                    "registries report exceeds the total registry slot limit ({MAX_BUILTIN_REGISTRY_SLOTS})"
+                )));
+            }
+
+            let mut names = Vec::new();
+            names.try_reserve_exact(slot_count).map_err(|error| {
+                Error::new(format!(
+                    "{name}: could not allocate registry name table: {error}"
+                ))
+            })?;
+            names.resize(slot_count, String::new());
+            for (entry, value) in entries {
+                let id = usize::try_from(
+                    value["protocol_id"]
+                        .as_u64()
+                        .ok_or_else(|| Error::new(format!("{entry}: no protocol_id")))?,
+                )
+                .map_err(|_| {
+                    Error::new(format!("{entry}: protocol_id does not fit this platform"))
+                })?;
+                if !names[id].is_empty() {
+                    return Err(Error::new(format!(
+                        "{name}: duplicate protocol_id {id} (entry {entry})"
+                    )));
                 }
                 names[id] = entry.clone();
             }
@@ -278,6 +381,38 @@ mod tests {
         assert_eq!(items.name(1), Some("minecraft:stone"));
         assert_eq!(items.id("minecraft:air"), Some(0));
         assert_eq!(items.name(2), None);
+    }
+
+    #[test]
+    fn rejects_out_of_range_protocol_ids_without_allocating() {
+        let huge = r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":18446744073709551615}}}}"#;
+        assert!(Builtin::parse(huge).is_err());
+        let sparse = r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":50},"minecraft:air":{"protocol_id":0}}}}"#;
+        let parsed = Builtin::parse(sparse).unwrap();
+        let items = parsed.get("minecraft:item").unwrap();
+        assert_eq!(items.name(50), Some("minecraft:stone"));
+        assert_eq!(items.name(1), None);
+        assert_eq!(items.id(""), None);
+
+        // A sparse id beyond the bounded allocation budget is still refused.
+        let large =
+            r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":1073741824}}}}"#;
+        assert!(Builtin::parse(large).is_err());
+
+        let duplicate = r#"{"minecraft:item":{"entries":{"minecraft:stone":{"protocol_id":0},"minecraft:dirt":{"protocol_id":0}}}}"#;
+        assert!(Builtin::parse(duplicate).is_err());
+    }
+
+    #[test]
+    fn bounds_registry_report_bytes_and_registry_count() {
+        let small = r#"{"minecraft:item":{}}"#;
+        assert!(Builtin::parse_with_limits(small, small.len() - 1, usize::MAX).is_err());
+
+        let many = r#"{"first":{},"second":{}}"#;
+        assert!(Builtin::parse_with_limits(many, usize::MAX, 1).is_err());
+
+        let empty_name = r#"{"minecraft:item":{"entries":{"":{"protocol_id":0}}}}"#;
+        assert!(Builtin::parse(empty_name).is_err());
     }
 
     #[test]
