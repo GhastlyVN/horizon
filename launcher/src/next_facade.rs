@@ -732,6 +732,8 @@ mod tests {
         let _: fn(&content::Query) -> Result<Vec<content::Project>, String> =
             content::registry_mods;
         let _: fn() -> Vec<modpacks::RegistryModpack> = modpacks::registry_modpacks;
+        let _: fn(&std::path::Path) -> Result<Vec<native_mods::Bundle>, String> =
+            native_mods::discover;
         assert_eq!(crate::browser::Kind::Mod.label(), "Mods");
         assert_eq!(crate::browser::Kind::Modpack.label(), "Modpacks");
     }
