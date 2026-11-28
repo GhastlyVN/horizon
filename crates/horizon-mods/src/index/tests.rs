@@ -258,7 +258,6 @@ fn shader_packs_pass_the_game_s_own_check() {
     assert!(open(&Kind::Shader).is_ok());
 }
 
-
 #[test]
 fn content_native_and_modpack_file_extensions_are_distinct() {
     // These suffixes are a packaging contract: a content .hmod must never be
