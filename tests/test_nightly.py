@@ -53,6 +53,31 @@ class NightlyTests(unittest.TestCase):
             "fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main"
         )
 
+    def test_pick_fetches_main_before_resolving_the_green_base(self):
+        events = []
+
+        with patch.object(
+            nightly, "fetch_main", side_effect=lambda: events.append("fetch_main")
+        ), patch.object(
+            nightly,
+            "green_base",
+            side_effect=lambda *_args: (
+                events.append("green_base") or nightly.Ref("main", "a" * 40, T)
+            ),
+        ), patch.object(
+            nightly.ns, "load_state", return_value=({}, "", "")
+        ), patch.object(
+            nightly, "build_set"
+        ) as build_set, patch.dict(
+            nightly.os.environ,
+            {"GITHUB_REPOSITORY": "GhastlyVN/horizon", "GH_TOKEN": "test"},
+            clear=True,
+        ):
+            nightly.pick(force=False)
+
+        self.assertEqual(events, ["fetch_main", "green_base"])
+        build_set.assert_called_once()
+
     def test_notes_list_what_reached_main_as_a_release_did(self):
         merged = [merged_pr(1, "Fix pistons", ["feature"], issues=[7]), merged_pr(2, "Water flows", []),
                   merged_pr(3, "CI only", ["skip-release"]), merged_pr(4, "Docs", [], paths=[])]
