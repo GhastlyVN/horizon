@@ -257,3 +257,25 @@ fn shader_packs_pass_the_game_s_own_check() {
     assert_eq!(Kind::Shader.extension(), Some("hshader"));
     assert!(open(&Kind::Shader).is_ok());
 }
+
+
+#[test]
+fn content_native_and_modpack_file_extensions_are_distinct() {
+    // These suffixes are a packaging contract: a content .hmod must never be
+    // routed through the native .hnmod build path or the .hpack modpack path.
+    assert_eq!(Kind::Mod.extension(), Some("hmod"));
+    assert_eq!(Kind::NativeMod.extension(), Some("hnmod"));
+    assert_eq!(Kind::Modpack.extension(), Some("hpack"));
+    assert_ne!(Kind::Mod.extension(), Kind::NativeMod.extension());
+    assert_ne!(Kind::Mod.extension(), Kind::Modpack.extension());
+    assert_ne!(Kind::NativeMod.extension(), Kind::Modpack.extension());
+
+    for (kind, encoded) in [
+        (Kind::Mod, "\"mod\""),
+        (Kind::NativeMod, "\"native-mod\""),
+        (Kind::Modpack, "\"modpack\""),
+    ] {
+        assert_eq!(serde_json::to_string(&kind).unwrap(), encoded);
+        assert_eq!(serde_json::from_str::<Kind>(encoded).unwrap(), kind);
+    }
+}
