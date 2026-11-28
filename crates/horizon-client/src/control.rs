@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc,
     },
     thread,
@@ -134,11 +134,24 @@ fn random_token() -> String {
 
 /// Write the endpoint file so that only this user can read it.
 fn write_private(path: &Path, text: &str) -> io::Result<()> {
+    static WRITES: AtomicU64 = AtomicU64::new(0);
+    let n = WRITES.fetch_add(1, Ordering::Relaxed);
+    let mut temporary = path.as_os_str().to_os_string();
+    temporary.push(format!(".{}.{}.tmp", std::process::id(), n));
+    let temporary = PathBuf::from(temporary);
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(path)?.write_all(text.as_bytes())
+    let written = options.open(&temporary).and_then(|mut file| {
+        file.write_all(text.as_bytes())?;
+        file.sync_all()
+    });
+    if let Err(error) = written.and_then(|()| std::fs::rename(&temporary, path)) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Constant-time comparison of the presented token.
@@ -413,6 +426,42 @@ mod tests {
         assert!(same_token("abc", "abc") && !same_token("abc", "abd") && !same_token("a", "ab"));
     }
 
+    #[test]
+    fn control_endpoint_replaces_links_and_keeps_private_mode() {
+        static RUNS: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "horizon-control-private-{}-{}",
+            std::process::id(),
+            RUNS.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"keep").unwrap();
+        let target = dir.join("endpoint.json");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&victim, &target).unwrap();
+            write_private(&target, "secret").unwrap();
+            assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+            assert!(
+                !std::fs::symlink_metadata(&target)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            write_private(&target, "secret").unwrap();
+        }
+        assert_eq!(std::fs::read(&target).unwrap(), b"secret");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     #[test]
     fn frame_summary_reports_block_entity_cache_work() {
         let mut stats = FrameStats::default();
