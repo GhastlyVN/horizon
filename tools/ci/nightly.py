@@ -219,8 +219,18 @@ def green_base(repo: str, issue: str) -> Ref:
     return Ref("main", sha, dt.datetime.fromisoformat(git("show", "-s", "--format=%cI", sha)))
 
 
+def fetch_main() -> None:
+    """Fetch main without requiring the optional current nightly tag.
+
+    The workflow checks out with fetch-depth 0, so existing tags are already present. The
+    nightly tag is deliberately absent between rotate and publish; build_set handles that
+    first-build state through ls-remote and previous is None.
+    """
+    git("fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main")
+
+
 def pick(force: bool) -> None:
-    git("fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main", "+refs/tags/nightly:refs/tags/nightly")
+    fetch_main()
     today = dt.datetime.now(dt.timezone.utc).date().isoformat()
     repo, token = os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GH_TOKEN", "")
     main = green_base(repo, os.environ.get("NIGHTLY_ISSUE", ""))

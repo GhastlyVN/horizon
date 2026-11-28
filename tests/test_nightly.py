@@ -1,5 +1,6 @@
 import datetime as dt
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from tools.ci import nightly
@@ -44,6 +45,38 @@ class NightlyTests(unittest.TestCase):
                 {"tagName": "v0.2.80", "isPrerelease": False},
                 {"tagName": "nightly-2026-10-15-extra", "isPrerelease": True}]
         self.assertEqual(nightly.stale(tags, dt.date(2026, 10, 28), 7), ["nightly-2026-10-20"])
+
+    def test_fetch_main_does_not_require_the_rotated_nightly_tag(self):
+        with patch.object(nightly, "git") as git:
+            nightly.fetch_main()
+        git.assert_called_once_with(
+            "fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main"
+        )
+
+    def test_pick_fetches_main_before_resolving_the_green_base(self):
+        events = []
+
+        with patch.object(
+            nightly, "fetch_main", side_effect=lambda: events.append("fetch_main")
+        ), patch.object(
+            nightly,
+            "green_base",
+            side_effect=lambda *_args: (
+                events.append("green_base") or nightly.Ref("main", "a" * 40, T)
+            ),
+        ), patch.object(
+            nightly.ns, "load_state", return_value=({}, "", "")
+        ), patch.object(
+            nightly, "build_set"
+        ) as build_set, patch.dict(
+            nightly.os.environ,
+            {"GITHUB_REPOSITORY": "GhastlyVN/horizon", "GH_TOKEN": "test"},
+            clear=True,
+        ):
+            nightly.pick(force=False)
+
+        self.assertEqual(events, ["fetch_main", "green_base"])
+        build_set.assert_called_once()
 
     def test_notes_list_what_reached_main_as_a_release_did(self):
         merged = [merged_pr(1, "Fix pistons", ["feature"], issues=[7]), merged_pr(2, "Water flows", []),
